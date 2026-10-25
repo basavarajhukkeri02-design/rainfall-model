@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#174d36">
+  <title>{% block title %}AgriRain | Rainfall insights{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='rain-image-fix-v8') }}">
+  <script defer src="{{ url_for('static', filename='js/script.js') }}"></script>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav wrap" aria-label="Main navigation">
+      <a class="brand" href="{{ url_for('home') }}" aria-label="AgriRain home"><span class="brand-mark">A</span><span>Agri<span class="brand-light">Rain</span><small>Weather for better growing</small></span></a>
+      <div class="nav-links">{% if session.get('user_id') %}<a href="{{ url_for('home') }}">Dashboard</a><a href="{{ url_for('history') }}">Prediction history</a><a href="{{ url_for('about') }}">About</a><div class="nav-profile"><span class="profile-avatar" aria-hidden="true">{{ session.get('user_email', 'A')[:1]|upper }}</span><span class="nav-user">{{ session.get('user_email') }}</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="nav-logout" type="submit">Sign out</button></form></div>{% else %}<a href="{{ url_for('login') }}">Log in</a><a class="nav-register" href="{{ url_for('register') }}">Create account</a>{% endif %}</div>
+    </nav>
+  </header>
+  <main>{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="wrap flash-list" role="status">{% for category, message in messages %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}</div>{% endif %}{% endwith %}{% block content %}{% endblock %}</main>
+  <footer class="footer"><div class="wrap footer-inner"><strong>AgriRain</strong><span>Forecasts inform decisions; they do not guarantee rainfall.</span><span>Student demonstration project</span><a class="footer-credit" href="https://vocal.media/earth/the-importance-of-rain-for-prosperous-farms" target="_blank" rel="noopener noreferrer">Forecast image source: Vocal</a><a class="footer-credit" href="https://unsplash.com/photos/a-large-field-of-green-grass-under-a-cloudy-sky-O51AL2Du_fM" target="_blank" rel="noopener noreferrer">Login rainy-field photo: Unsplash</a><a class="footer-credit" href="https://unsplash.com/photos/an-aerial-view-of-a-rice-field-surrounded-by-trees-jc2Cga3BbXU" target="_blank" rel="noopener noreferrer">Rainforest field photo: Unsplash</a></div></footer>
+</body>
+</html>

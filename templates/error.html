@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}Something went wrong | AgriRain{% endblock %}
+{% block content %}<section class="wrap error-page panel"><p class="eyebrow">REQUEST NOT COMPLETED</p><h1>Something went wrong</h1><p>The page could not be completed. Please return home and try again.</p><a class="button" href="{{ url_for('home') }}">Return home</a></section>{% endblock %}

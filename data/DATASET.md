@@ -1,0 +1,1 @@
+Place the extracted `weatherAUS.csv` from the Kaggle Rain in Australia dataset here to follow the documented layout. The training script also checks the project root for convenience. This is Australian data and does not validate predictions for Karnataka.

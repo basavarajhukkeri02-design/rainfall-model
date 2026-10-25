@@ -1,0 +1,13 @@
+.venv/
+.tools/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+prediction_history.db
+prediction_history.db-shm
+prediction_history.db-wal
+weatherAUS.csv
+data/weatherAUS.csv
+AgriRain_project.zip
