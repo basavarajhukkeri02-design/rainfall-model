@@ -168,8 +168,8 @@ Flask's built-in server is for local development and demonstration only. It does
 
 ## Render deployment
 
-The repository includes `render.yaml` for a Render Python web service. Commit the project to a Git provider that Render can access, then create a Blueprint in Render using that repository and approve the service configuration. It pins Python and the model's scikit-learn dependencies, serves the app with Gunicorn, creates a Render-managed secret, enables secure session cookies, and places SQLite at `/var/data/prediction_history.db`.
+The repository includes `render.yaml` for a Render free Python web service. It pins Python and the model's scikit-learn dependencies, serves the app with Gunicorn, enables secure session cookies, and stores SQLite under `/tmp`.
 
-SQLite must be on persistent storage or account and prediction data can disappear on restart/redeploy. Render persistent disks require a paid web-service plan; review Render's current plan and disk pricing before creating the service. The deployed database starts separately from the local `prediction_history.db`; local accounts and history are not uploaded. Create a new account on the deployed site. Keep the local database private and do not commit it.
+Render's free service has an ephemeral filesystem, so accounts and prediction history may be lost when the instance restarts or redeploys. The deployed database starts separately from the local `prediction_history.db`; local accounts and history are not uploaded. Create a new account on the deployed site. Do not store important or sensitive data in this demo deployment. Persistent SQLite storage on Render requires a paid web-service plan; this Blueprint does not configure a paid plan or disk.
 
 Official instructions: [Deploy a Flask App](https://render.com/docs/deploy-flask), [Persistent Disks](https://render.com/docs/disks), and [Blueprint Specification](https://render.com/docs/blueprint-spec).

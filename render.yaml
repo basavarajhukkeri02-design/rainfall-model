@@ -2,21 +2,15 @@ services:
   - type: web
     name: agrirain
     runtime: python
-    plan: starter
+    plan: free
     region: singapore
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --workers 1 --bind 0.0.0.0:$PORT app:app
     healthCheckPath: /login
-    disk:
-      name: agrirain-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.5
       - key: AGRIRAIN_DATABASE
-        value: /var/data/prediction_history.db
+        value: /tmp/prediction_history.db
       - key: SESSION_COOKIE_SECURE
         value: "true"
-      - key: FLASK_SECRET_KEY
-        generateValue: true
