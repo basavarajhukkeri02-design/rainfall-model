@@ -56,38 +56,28 @@
       <div class="loading" data-loading hidden><span class="spinner" aria-hidden="true"></span> Loading forecast and
         prediction…</div>
     </form>
-    <details class="manual-weather">
-      <summary>Enter measured weather values if the live forecast is unavailable</summary>
-      <p>Use actual local measurements. All four values are required; the application does not fill in missing values.
-      </p>
-      
-<div class="manual-fields">
-    <label>
-        Min temp (°C)
-        <input type="number" step="any" name="observed_min_temp"
-               form="prediction-form">
-    </label>
-
-    <label>
-        Max temp (°C)
-        <input type="number" step="any" name="observed_max_temp"
-               form="prediction-form">
-    </label>
-
-    <label>
-        Rainfall (mm)
-        <input type="number" min="0" step="any"
-               name="observed_rainfall" form="prediction-form">
-    </label>
-
-    <label>
-        Humidity (%)
-        <input type="number" min="0" max="100" step="any"
-               name="observed_humidity" form="prediction-form">
-    </label>
-</div>
-
-    </details>
+    <div class="manual-weather">
+      <h3>Weather values for the estimate</h3>
+      <p>Forecast values are filled in when available. Review or enter all four values before predicting.</p>
+      <div class="manual-fields">
+        <label for="observed_min_temp">Min temp (°C)
+          <input id="observed_min_temp" type="number" step="any" name="observed_min_temp"
+                 value="{{ request.form.get('observed_min_temp', weather.min_temp if weather else '') }}" required form="prediction-form">
+        </label>
+        <label for="observed_max_temp">Max temp (°C)
+          <input id="observed_max_temp" type="number" step="any" name="observed_max_temp"
+                 value="{{ request.form.get('observed_max_temp', weather.max_temp if weather else '') }}" required form="prediction-form">
+        </label>
+        <label for="observed_rainfall">Rainfall (mm)
+          <input id="observed_rainfall" type="number" min="0" step="any" name="observed_rainfall"
+                 value="{{ request.form.get('observed_rainfall', weather.rainfall if weather else '') }}" required form="prediction-form">
+        </label>
+        <label for="observed_humidity">Humidity (%)
+          <input id="observed_humidity" type="number" min="0" max="100" step="any" name="observed_humidity"
+                 value="{{ request.form.get('observed_humidity', weather.humidity if weather else '') }}" required form="prediction-form">
+        </label>
+      </div>
+    </div>
     {% if weather %}<div class="weather-summary">
       <p class="place">{{ district }} <span>· Karnataka</span></p>
       <p class="big-temp">{{ '%.1f'|format(weather.max_temp) }}<span>°C</span></p>
@@ -108,48 +98,6 @@
     </div>{% endif %}
   </div>
 
-  <div class="manual-weather">
-    <h3>Edit weather values</h3>
-    <p>Live forecast values are filled automatically. You can change them before predicting.</p>
-
-    <div class="manual-fields">
-      <div class="weather-form">
-        <div class="weather-form">
-    <div class="form-group">
-        <label for="min_temp">Min Temp (°C)</label>
-        <input type="number" id="min_temp"
-               name="observed_min_temp"
-               value="{{ weather.min_temp if weather else '' }}"
-               step="0.1" form="prediction-form">
-    </div>
-    <div class="form-group">
-        <label for="max_temp">Max Temp (°C)</label>
-        <input type="number" id="max_temp"
-               name="observed_max_temp"
-               value="{{ weather.max_temp if weather else '' }}"
-               step="0.1" form="prediction-form">
-    </div>
-
-    <div class="form-group">
-        <label for="rainfall">Rainfall (mm)</label>
-        <input type="number" id="rainfall"
-               name="observed_rainfall"
-               value="{{ weather.rainfall if weather else '' }}"
-               min="0" step="0.1"
-               form="prediction-form">
-    </div>
-
-    <div class="form-group">
-        <label for="humidity">Humidity (%)</label>
-        <input type="number" id="humidity"
-               name="observed_humidity"
-               value="{{ weather.humidity if weather else '' }}"
-               min="0" max="100" step="0.1"
-               form="prediction-form">
-    </div>
-</div>
-        </div>
-      </div>
       <aside class="panel prediction-panel">
         <p class="eyebrow">EXPERIMENTAL MODEL</p>
         <h2>Rain likelihood</h2>

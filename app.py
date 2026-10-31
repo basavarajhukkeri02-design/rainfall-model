@@ -364,7 +364,7 @@ def home():
             flash(model_error, "error")
         else:
             try:
-                model_weather = weather or read_manual_weather(request.form)
+                model_weather = read_manual_weather(request.form)
                 prediction, probability = prediction_for(model_bundle, model_weather)
                 with database_connection() as connection:
                     connection.execute("""
@@ -380,14 +380,14 @@ def home():
                 session["prediction_result"] = {
                     "district": selected, "prediction": prediction,
                     "probability": probability,
-                    "input_source": "live forecast" if weather else "user-entered observations",
+                    "input_source": "forecast or edited weather values",
                     "weather": model_weather,
                 }
                 return redirect(url_for("home", district=selected))
             except Exception:
                 app.logger.exception("Prediction could not be completed")
                 flash(
-                    "Prediction needs a loaded model and all four valid weather values. Enter measured values if the live forecast is unavailable.",
+                    "Prediction needs a loaded model and four valid weather values. Review the values and try again.",
                     "error",
                 )
 

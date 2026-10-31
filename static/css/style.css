@@ -2136,19 +2136,6 @@ body > footer {
 
 @media (prefers-reduced-motion: reduce) {
     .weather-animation-bg::before {
-        animation: none;body {
-    background-image: url("/static/images/farm-background.jpg");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
-}
+        animation: none;
     }
-}
-body {
-    background-image: url("/static/images/farm-background.jpg");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
 }
