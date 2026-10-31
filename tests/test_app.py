@@ -101,6 +101,30 @@ class AgriRainAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Weather forecast is temporarily unavailable", response.data)
 
+    @patch("app.load_model", return_value=({"pipeline": FakePipeline(), "features": app.FEATURES}, None))
+    @patch("app.get_weather", side_effect=requests.Timeout)
+    def test_manual_observations_allow_prediction_when_forecast_is_down(self, _weather, _model):
+        response = self.post_form("/", {
+            "district": "Mysuru", "observed_min_temp": "19.0",
+            "observed_max_temp": "29.0", "observed_rainfall": "2.5",
+            "observed_humidity": "72",
+        })
+        self.assertEqual(response.status_code, 302)
+        page = self.client.get(response.location, follow_redirects=True)
+        self.assertIn(b"Rain likely", page.data)
+        self.assertIn(b"user-entered observations", page.data)
+        self.assertEqual(self.count_records(), 1)
+
+    @patch("app.load_model", return_value=({"pipeline": FakePipeline(), "features": app.FEATURES}, None))
+    @patch("app.get_weather", side_effect=requests.Timeout)
+    def test_missing_manual_observation_does_not_predict(self, _weather, _model):
+        response = self.post_form("/", {
+            "district": "Mysuru", "observed_min_temp": "19.0",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"all four valid weather values", response.data)
+        self.assertEqual(self.count_records(), 0)
+
     def test_history_clear_requires_confirmation(self):
         with app.database_connection() as connection:
             other_id = connection.execute(

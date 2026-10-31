@@ -22,6 +22,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = Path(os.environ.get("AGRIRAIN_DATABASE", BASE_DIR / "prediction_history.db"))
 MODEL_PATH = BASE_DIR / "rainfall_model.pkl"
+OPEN_METEO_URL = os.environ.get(
+    "OPEN_METEO_API_URL", "https://api.open-meteo.com/v1/forecast"
+)
 FEATURES = ["MinTemp", "MaxTemp", "Rainfall", "Humidity3pm"]
 DISTRICTS = {
     "Bengaluru": (12.9716, 77.5946), "Belagavi": (15.8497, 74.4977),
@@ -147,21 +150,28 @@ def get_weather(district):
     """Return today's Open-Meteo forecast; missing or invalid values are errors."""
     latitude, longitude = DISTRICTS[district]
     response = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
+        OPEN_METEO_URL,
         params={
             "latitude": latitude, "longitude": longitude,
             "daily": "temperature_2m_min,temperature_2m_max,rain_sum",
             "hourly": "relative_humidity_2m", "forecast_days": 1,
             "timezone": "Asia/Kolkata",
         },
-        timeout=12,
+        timeout=(4, 12),
     )
+    app.logger.info("Open-Meteo response status=%s district=%s", response.status_code, district)
     response.raise_for_status()
     payload = response.json()
-    daily, hourly = payload["daily"], payload["hourly"]
-    forecast_date = daily["time"][0]
-    humidity_times = hourly["time"]
-    humidity_values = hourly["relative_humidity_2m"]
+    try:
+        daily, hourly = payload["daily"], payload["hourly"]
+        forecast_date = daily["time"][0]
+        humidity_times = hourly["time"]
+        humidity_values = hourly["relative_humidity_2m"]
+        min_temp = daily["temperature_2m_min"][0]
+        max_temp = daily["temperature_2m_max"][0]
+        rainfall = daily["rain_sum"][0]
+    except (KeyError, IndexError, TypeError) as error:
+        raise ValueError("Open-Meteo response is missing required forecast fields") from error
     target_hour = f"{forecast_date}T15:00"
     try:
         humidity_index = humidity_times.index(target_hour)
@@ -170,9 +180,9 @@ def get_weather(district):
         raise ValueError("3 PM humidity forecast is unavailable") from error
     result = {
         "forecast_date": forecast_date,
-        "min_temp": daily["temperature_2m_min"][0],
-        "max_temp": daily["temperature_2m_max"][0],
-        "rainfall": daily["rain_sum"][0],
+        "min_temp": min_temp,
+        "max_temp": max_temp,
+        "rainfall": rainfall,
         "humidity": humidity_3pm,
     }
     for key in ("min_temp", "max_temp", "rainfall", "humidity"):
@@ -183,10 +193,15 @@ def get_weather(district):
 
 
 def prediction_for(bundle, weather):
-    row = pd.DataFrame([[
-        weather["min_temp"], weather["max_temp"],
-        weather["rainfall"], weather["humidity"],
-    ]], columns=FEATURES)
+    feature_values = {
+        "MinTemp": weather.get("min_temp"),
+        "MaxTemp": weather.get("max_temp"),
+        "Rainfall": weather.get("rainfall"),
+        "Humidity3pm": weather.get("humidity"),
+    }
+    if any(value is None for value in feature_values.values()):
+        raise ValueError("All four weather features are required for prediction")
+    row = pd.DataFrame([[feature_values[name] for name in FEATURES]], columns=FEATURES)
     pipeline = bundle["pipeline"]
     label = int(pipeline.predict(row)[0])
     classes = list(getattr(pipeline, "classes_", []))
@@ -196,6 +211,31 @@ def prediction_for(bundle, weather):
         if np.isfinite(candidate) and 0 <= candidate <= 1:
             probability = candidate
     return ("Rain likely" if label == 1 else "Rain less likely"), probability
+
+
+def read_manual_weather(form):
+    """Read explicitly entered observations; never invent missing model inputs."""
+    form_names = {
+        "min_temp": "min_temp", "max_temp": "max_temp",
+        "rainfall": "rainfall", "humidity": "humidity",
+    }
+    values = {}
+    for key, name in form_names.items():
+        raw = form.get(f"observed_{name}", "").strip()
+        if not raw:
+            raise ValueError("Manual observations are incomplete")
+        try:
+            value = float(raw)
+        except ValueError as error:
+            raise ValueError("Manual observations must be numeric") from error
+        if not np.isfinite(value):
+            raise ValueError("Manual observations must be finite numbers")
+        values[key] = value
+    if values["min_temp"] > values["max_temp"]:
+        raise ValueError("Minimum temperature cannot exceed maximum temperature")
+    if values["rainfall"] < 0 or not 0 <= values["humidity"] <= 100:
+        raise ValueError("Rainfall must be nonnegative and humidity must be 0–100")
+    return values
 
 
 def login_required(view):
@@ -312,7 +352,7 @@ def home():
     try:
         weather = get_weather(selected)
     except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
-        app.logger.info("Weather forecast unavailable for %s", selected, exc_info=True)
+        app.logger.warning("Weather forecast unavailable for %s", selected, exc_info=True)
         flash("Weather forecast is temporarily unavailable. Please try again later.", "error")
 
     if request.method == "POST":
@@ -320,13 +360,12 @@ def home():
             pass
         elif not request.form.get("district"):
             flash("Choose a district before requesting a prediction.", "error")
-        elif weather is None:
-            flash("No prediction was made because weather data is unavailable.", "error")
         elif model_bundle is None:
             flash(model_error, "error")
         else:
             try:
-                prediction, probability = prediction_for(model_bundle, weather)
+                model_weather = weather or read_manual_weather(request.form)
+                prediction, probability = prediction_for(model_bundle, model_weather)
                 with database_connection() as connection:
                     connection.execute("""
                         INSERT INTO prediction_history
@@ -334,18 +373,23 @@ def home():
                          temperature_max, expected_rainfall, humidity, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        session["user_id"], selected, prediction, probability, weather["min_temp"],
-                        weather["max_temp"], weather["rainfall"], weather["humidity"],
+                        session["user_id"], selected, prediction, probability, model_weather["min_temp"],
+                        model_weather["max_temp"], model_weather["rainfall"], model_weather["humidity"],
                         datetime.now().astimezone().isoformat(timespec="seconds"),
                     ))
                 session["prediction_result"] = {
                     "district": selected, "prediction": prediction,
-                    "probability": probability, "weather": weather,
+                    "probability": probability,
+                    "input_source": "live forecast" if weather else "user-entered observations",
+                    "weather": model_weather,
                 }
                 return redirect(url_for("home", district=selected))
-            except (ValueError, KeyError, TypeError, sqlite3.Error):
+            except Exception:
                 app.logger.exception("Prediction could not be completed")
-                flash("Prediction could not be saved. Please retry.", "error")
+                flash(
+                    "Prediction needs a loaded model and all four valid weather values. Enter measured values if the live forecast is unavailable.",
+                    "error",
+                )
 
     return render_template(
         "index.html", districts=DISTRICTS, district=selected, weather=weather,
