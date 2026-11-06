@@ -12,5 +12,7 @@ services:
         value: 3.13.5
       - key: AGRIRAIN_DATABASE
         value: /tmp/prediction_history.db
+      - key: GOOGLE_TRANSLATE_API_KEY
+        sync: false
       - key: SESSION_COOKIE_SECURE
         value: "true"

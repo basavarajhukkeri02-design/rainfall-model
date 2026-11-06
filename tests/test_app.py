@@ -35,6 +35,8 @@ class AgriRainAppTests(unittest.TestCase):
             user_session["user_id"] = self.user_id
             user_session["user_email"] = "owner@example.com"
             user_session["_csrf_token"] = secrets.token_urlsafe(32)
+        with app._translation_rate_lock:
+            app._translation_request_times.clear()
         self.weather = {
             "forecast_date": "2026-10-25", "min_temp": 19.0,
             "max_temp": 29.0, "rainfall": 2.5, "humidity": 72.0,
@@ -57,6 +59,14 @@ class AgriRainAppTests(unittest.TestCase):
         payload = dict(data)
         payload["_csrf_token"] = token
         return self.client.post(path, data=payload)
+
+    def post_translation(self, data):
+        with self.client.session_transaction() as user_session:
+            token = user_session["_csrf_token"]
+        return self.client.post(
+            "/api/translate", json=data,
+            headers={"X-CSRF-Token": token},
+        )
 
     @patch("app.load_model", return_value=({"pipeline": FakePipeline(), "features": app.FEATURES}, None))
     @patch("app.get_weather")
@@ -153,6 +163,107 @@ class AgriRainAppTests(unittest.TestCase):
         self.assertIn(b"owner@example.com", home.data)
         self.assertEqual(self.client.get("/history").status_code, 200)
         self.assertEqual(self.client.get("/about").status_code, 200)
+
+    def test_translator_page_is_authenticated_and_shows_supported_languages(self):
+        response = self.client.get("/translator")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Language Translator", response.data)
+        for language in ("Kannada", "English", "Hindi", "Telugu", "Tamil", "Malayalam", "Marathi", "Bengali", "Gujarati", "Punjabi", "Urdu"):
+            self.assertIn(language.encode(), response.data)
+
+    @patch.dict("os.environ", {"GOOGLE_TRANSLATE_API_KEY": "test-server-key"})
+    @patch("app.requests.post")
+    def test_requested_indian_language_pairs_are_sent_to_google_and_saved(self, post):
+        post.return_value.json.return_value = {
+            "data": {"translations": [{"translatedText": "mocked test result"}]}
+        }
+        pairs = [
+            ("kn", "en", "ಮಳೆ", "Rain"),
+            ("en", "kn", "Rain", "ಮಳೆ"),
+            ("hi", "kn", "बारिश", "ಮಳೆ"),
+            ("kn", "hi", "ಮಳೆ", "बारिश"),
+            ("en", "te", "Rain", "వర్షం"),
+            ("te", "en", "వర్షం", "Rain"),
+        ]
+        for source, target, phrase, _expected_example in pairs:
+            with self.subTest(source=source, target=target):
+                response = self.post_translation({"text": phrase, "source": source, "target": target})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["translated_text"], "mocked test result")
+                self.assertEqual(post.call_args.kwargs["json"]["source"], source)
+                self.assertEqual(post.call_args.kwargs["json"]["target"], target)
+                self.assertEqual(post.call_args.kwargs["params"]["key"], "test-server-key")
+                self.assertNotIn("test-server-key", response.get_data(as_text=True))
+        with app.database_connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM translation_history").fetchone()[0], len(pairs))
+
+    @patch.dict("os.environ", {}, clear=False)
+    def test_translation_without_provider_key_returns_setup_error_without_fake_result(self):
+        import os
+        old_key = os.environ.pop("GOOGLE_TRANSLATE_API_KEY", None)
+        try:
+            response = self.post_translation({"text": "Rain", "source": "en", "target": "kn"})
+        finally:
+            if old_key is not None:
+                os.environ["GOOGLE_TRANSLATE_API_KEY"] = old_key
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("GOOGLE_TRANSLATE_API_KEY", response.json["error"])
+        self.assertNotIn("translated_text", response.json)
+
+    def test_translation_input_language_and_csrf_validation(self):
+        token = self.client.session_transaction
+        with token() as user_session:
+            csrf = user_session["_csrf_token"]
+        invalid = self.client.post(
+            "/api/translate", json={"text": "hello", "source": "en", "target": "xx"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(invalid.status_code, 400)
+        too_long = self.client.post(
+            "/api/translate", json={"text": "x" * (app.TRANSLATION_MAX_CHARS + 1), "source": "en", "target": "kn"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(too_long.status_code, 400)
+        missing_csrf = self.client.post(
+            "/api/translate", json={"text": "hello", "source": "en", "target": "kn"},
+        )
+        self.assertEqual(missing_csrf.status_code, 400)
+
+    @patch.dict("os.environ", {"GOOGLE_TRANSLATE_API_KEY": "test-server-key"})
+    @patch("app.requests.post")
+    def test_translation_endpoint_rate_limit_and_provider_failure(self, post):
+        post.return_value.json.return_value = {
+            "data": {"translations": [{"translatedText": "ಮಳೆ"}]}
+        }
+        with patch.object(app, "TRANSLATION_RATE_LIMIT", 1):
+            first = self.post_translation({"text": "rain", "source": "en", "target": "kn"})
+            second = self.post_translation({"text": "rain", "source": "en", "target": "kn"})
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+        self.assertEqual(post.call_count, 1)
+
+    def test_translation_history_clear_is_account_scoped(self):
+        with app.database_connection() as connection:
+            other_id = connection.execute(
+                "INSERT INTO users (email,password_hash,created_at) VALUES (?,?,?)",
+                ("other@example.com", generate_password_hash("password123"), "2026-10-26T10:00:00+05:30"),
+            ).lastrowid
+            connection.executemany(
+                """INSERT INTO translation_history
+                   (user_id,source_language,target_language,source_text,translated_text,created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                [
+                    (self.user_id, "en", "kn", "rain", "ಮಳೆ", "2026-10-26T10:00:00+05:30"),
+                    (other_id, "en", "hi", "rain", "बारिश", "2026-10-26T10:00:00+05:30"),
+                ],
+            )
+        self.post_form("/clear-translation-history", {"confirm": "yes"})
+        with app.database_connection() as connection:
+            remaining = connection.execute(
+                "SELECT user_id FROM translation_history"
+            ).fetchall()
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["user_id"], other_id)
 
     def test_registration_stores_a_hash_and_login_authenticates(self):
         with self.client.session_transaction() as user_session:

@@ -126,6 +126,27 @@ h3 {
     text-decoration: underline
 }
 
+.ui-language-control select {
+    min-height: 36px;
+    border: 1px solid #d7e2d5;
+    border-radius: 9px;
+    background: #f7faf5;
+    color: var(--green);
+    font: 700 .82rem 'Nirmala UI', 'Noto Sans Kannada', 'Noto Sans Devanagari', 'Noto Sans Telugu', 'Noto Sans Tamil', 'Noto Sans Malayalam', Arial, sans-serif;
+    padding: 0 9px;
+}
+
+:lang(kn), :lang(hi), :lang(mr), :lang(te), :lang(ta), :lang(ml) {
+    font-family: 'Nirmala UI', 'Noto Sans Kannada', 'Noto Sans Devanagari', 'Noto Sans Telugu', 'Noto Sans Tamil', 'Noto Sans Malayalam', Arial, sans-serif;
+}
+
+.ui-language-control { margin: 0; }
+
+@media (max-width: 760px) {
+    .ui-language-control { order: -1; }
+    .ui-language-control select { min-height: 40px; max-width: 100%; }
+}
+
 .hero {
     position: relative;
     overflow: hidden;
@@ -2002,7 +2023,6 @@ select {
 .password-toggle[aria-pressed="true"] .eye-hide {
     display: block
 }
-```css
 .weather-form {
     display: flex;
     flex-direction: column;
@@ -2040,6 +2060,337 @@ select {
     width: 100%;
     box-sizing: border-box;
     padding: 10px;
+}
+
+/* Language translator */
+.translator-page {
+    display: grid;
+    gap: 24px;
+    margin-top: -26px;
+    margin-bottom: 72px;
+    position: relative;
+    z-index: 2;
+}
+
+.translator-card,
+.translation-history {
+    background: #fff;
+    border: 1px solid #e2e9df;
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+    padding: clamp(22px, 4vw, 42px);
+}
+
+.translator-heading,
+.history-heading {
+    align-items: center;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+}
+
+.translator-heading h2,
+.history-heading h2 {
+    margin-bottom: 0;
+}
+
+.translator-mark {
+    align-items: center;
+    background: linear-gradient(145deg, #e6f2d8, #dceef4);
+    border-radius: 18px;
+    color: #245c4f;
+    display: flex;
+    font-size: 1.35rem;
+    font-weight: 800;
+    height: 54px;
+    justify-content: center;
+    width: 54px;
+}
+
+.translator-config-note {
+    background: #eff7fb;
+    border: 1px solid #cfe6ef;
+    border-radius: 12px;
+    color: #24566b;
+    margin: 24px 0 0;
+    padding: 13px 16px;
+}
+
+.translator-config-note code {
+    font-size: .9em;
+    font-weight: 700;
+}
+
+.language-row {
+    align-items: end;
+    display: grid;
+    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr);
+    margin: 28px 0 16px;
+}
+
+.language-row label {
+    color: #426353;
+    display: grid;
+    font-size: .86rem;
+    font-weight: 700;
+    gap: 7px;
+}
+
+.language-row select {
+    border: 1px solid #d7e2d5;
+    border-radius: 12px;
+    color: var(--ink);
+    font: inherit;
+    min-height: 48px;
+    padding: 0 13px;
+    width: 100%;
+}
+
+.swap-button {
+    background: #edf5f5;
+    border: 1px solid #d6e8e8;
+    border-radius: 50%;
+    color: #28667a;
+    cursor: pointer;
+    font-size: 1.45rem;
+    height: 46px;
+    line-height: 1;
+    margin-bottom: 1px;
+    width: 46px;
+}
+
+.swap-button:hover {
+    background: #dceef3;
+}
+
+.translation-columns {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.translation-pane {
+    background: #fbfcf9;
+    border: 1px solid #dfe8dc;
+    border-radius: 15px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 245px;
+    overflow: hidden;
+}
+
+.translation-pane textarea,
+.translation-output {
+    background: transparent;
+    border: 0;
+    color: #213c30;
+    flex: 1;
+    font-family: "Noto Sans Kannada", "Noto Sans Devanagari", "Nirmala UI", "Noto Sans", sans-serif;
+    font-size: 1.1rem;
+    line-height: 1.75;
+    min-height: 185px;
+    outline: 0;
+    overflow-wrap: anywhere;
+    padding: 20px;
+    resize: vertical;
+    width: 100%;
+}
+
+.translation-pane textarea::placeholder,
+.translation-output.is-placeholder {
+    color: #84948a;
+}
+
+.translation-output {
+    white-space: pre-wrap;
+}
+
+.output-pane,
+.translation-output-pane {
+    background: linear-gradient(145deg, #f5faf4, #f2f8fb);
+}
+
+.translation-pane-footer {
+    align-items: center;
+    border-top: 1px solid #e7ede4;
+    color: #76867b;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: .78rem;
+    gap: 8px;
+    justify-content: space-between;
+    min-height: 47px;
+    padding: 7px 14px;
+}
+
+.output-actions {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+}
+
+.icon-text-button {
+    background: none;
+    border: 0;
+    color: #28677b;
+    cursor: pointer;
+    font: inherit;
+    font-size: .8rem;
+    font-weight: 700;
+    padding: 4px 0;
+}
+
+.icon-text-button:hover:not(:disabled) {
+    color: #174d36;
+    text-decoration: underline;
+}
+
+.icon-text-button:disabled {
+    color: #a6b1a8;
+    cursor: not-allowed;
+}
+
+.translator-actions {
+    align-items: center;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    margin-top: 18px;
+    min-height: 48px;
+}
+
+.translation-status {
+    color: #32634a;
+    font-size: .9rem;
+    margin: 0;
+}
+
+.translation-status:not(:empty) {
+    background: #eff7ed;
+    border-radius: 9px;
+    padding: 8px 12px;
+}
+
+.translator-submit {
+    flex: 0 0 auto;
+    min-width: 150px;
+}
+
+.translator-submit[aria-busy="true"] {
+    cursor: wait;
+}
+
+.translator-disclaimer {
+    color: #7a897e;
+    font-size: .82rem;
+    margin: 14px 0 0;
+}
+
+.translation-history {
+    padding-block: 28px;
+}
+
+.translation-history-list {
+    display: grid;
+    margin-top: 18px;
+}
+
+.translation-history-item {
+    border-top: 1px solid #e8eee5;
+    padding: 16px 0;
+}
+
+.translation-history-item p {
+    font-family: "Noto Sans Kannada", "Noto Sans Devanagari", "Nirmala UI", "Noto Sans", sans-serif;
+    margin: 10px 0 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.translation-history-item .history-result {
+    color: #285d48;
+    font-weight: 650;
+}
+
+.history-languages {
+    align-items: center;
+    color: #2f684e;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: .82rem;
+    font-weight: 700;
+    gap: 9px;
+}
+
+.history-languages time {
+    color: #87948a;
+    font-size: .76rem;
+    font-weight: 400;
+    margin-left: auto;
+}
+
+.visually-hidden {
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+@media(max-width:800px) {
+    .nav-links {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+}
+
+@media(max-width:600px) {
+    .translator-page {
+        margin-top: -16px;
+    }
+
+    .translator-card,
+    .translation-history {
+        border-radius: 17px;
+        padding: 20px 16px;
+    }
+
+    .translation-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .translation-pane {
+        min-height: 210px;
+    }
+
+    .translation-pane textarea,
+    .translation-output {
+        min-height: 155px;
+        padding: 16px;
+    }
+
+    .translator-actions {
+        align-items: stretch;
+        flex-direction: column-reverse;
+    }
+
+    .translator-submit {
+        width: 100%;
+    }
+
+    .history-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .history-languages time {
+        margin-left: 0;
+        width: 100%;
+    }
 }
 /* AgriRain background animation layer */
 body {

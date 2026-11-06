@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% block title %}{{ _('Language Translator | AgriRain') }}{% endblock %}
+{% block content %}
+<section class="page-hero translator-hero">
+  <div class="wrap">
+    <p class="eyebrow">{{ _('WORDS THAT GROW TOGETHER') }}</p>
+    <h1>{{ _('Language Translator') }}</h1>
+    <p>{{ _('Translate everyday words and sentences into the language that feels closest to home.') }}</p>
+  </div>
+</section>
+
+<section class="wrap translator-page" data-translator data-endpoint="{{ url_for('api_translate') }}"
+         data-csrf-token="{{ csrf_token }}" data-max-chars="{{ max_chars }}" data-word-label="{{ _('word') }}" data-words-label="{{ _('words') }}" data-character-label="{{ _('characters') }}" data-reading-label="{{ _('Reading aloud in') }}" data-voice-missing="{{ _('This browser does not have a voice installed for') }}" data-complete-message="{{ _('Translation complete. It has been saved to your account history.') }}" data-copy-message="{{ _('Translation copied to clipboard.') }}" data-copy-error="{{ _('Clipboard access is unavailable in this browser. Select and copy the translation instead.') }}" data-read-error="{{ _('Read aloud is not supported by this browser.') }}" data-voice-error="{{ _('The selected voice could not read this translation.') }}" data-translating-message="{{ _('Translating...') }}" data-empty-message="{{ _('Enter some text to translate.') }}" data-same-message="{{ _('Choose two different languages.') }}" data-generic-error="{{ _('The translation service is unavailable. Please try again.') }}" data-placeholder-count="{{ _('Translation result') }}" data-swapped-count="{{ _('Swapped text is ready to translate') }}">
+  <div class="translator-card panel">
+    <div class="translator-heading">
+      <div><p class="eyebrow">{{ _('11 INDIAN LANGUAGES') }}</p><h2>{{ _('What would you like to say?') }}</h2></div>
+      <span class="translator-mark" aria-hidden="true">Aa</span>
+    </div>
+
+    {% if not translation_configured %}
+    <p class="translator-config-note" role="status">{{ _('Translation is not configured yet. Add a Google Cloud Translation API key to the server as GOOGLE_TRANSLATE_API_KEY.') }}</p>
+    {% endif %}
+
+    <div class="language-row">
+      <label for="source-language">{{ _('From') }}
+        <select id="source-language" data-source-language>
+          {% for code, name in languages.items() %}<option value="{{ code }}" {% if code == 'en' %}selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="swap-button" type="button" data-swap-languages aria-label="{{ _('Swap languages') }}" title="{{ _('Swap languages') }}">⇄</button>
+      <label for="target-language">{{ _('To') }}
+        <select id="target-language" data-target-language>
+          {% for code, name in languages.items() %}<option value="{{ code }}" {% if code == 'kn' %}selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="translation-columns">
+      <div class="translation-pane">
+        <label class="visually-hidden" for="translation-input">{{ _('Text to translate') }}</label>
+        <textarea id="translation-input" data-translation-input maxlength="{{ max_chars }}" rows="7"
+                  placeholder="Type a word or sentence…" lang="en" spellcheck="true"></textarea>
+        <div class="translation-pane-footer"><span data-input-count>0 words · 0/{{ max_chars }} characters</span>
+          <button type="button" class="icon-text-button" data-clear-text>{{ _('Clear text') }}</button></div>
+      </div>
+      <div class="translation-pane translation-output-pane">
+        <div class="translation-output is-placeholder" data-translation-output data-placeholder="{{ _('Your translation will appear here.') }}" aria-live="polite" lang="en">{{ _('Your translation will appear here.') }}</div>
+        <div class="translation-pane-footer"><span data-output-count>{{ _('Translation result') }}</span>
+          <div class="output-actions">
+            <button type="button" class="icon-text-button" data-copy-translation disabled>{{ _('Copy') }}</button>
+            <button type="button" class="icon-text-button" data-speak-translation disabled>🔊 {{ _('Read aloud') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="translator-actions">
+      <p class="translation-status" data-translation-status role="status" aria-live="polite"></p>
+      <button type="button" class="button translator-submit" data-translate>{{ _('Translate') }} <span aria-hidden="true">→</span></button>
+    </div>
+    <p class="translator-disclaimer">{{ _('Text is sent to Google Cloud for translation and saved in your account history. Avoid entering sensitive personal information. Machine translations can be wrong; verify important farming, health, and safety instructions with a trusted speaker.') }}</p>
+  </div>
+
+  <section class="translation-history panel" aria-labelledby="translation-history-title">
+    <div class="history-heading">
+      <div><p class="eyebrow">{{ _('PRIVATE TO YOUR ACCOUNT') }}</p><h2 id="translation-history-title">{{ _('Recent translations') }}</h2></div>
+      <form method="post" action="{{ url_for('clear_translation_history') }}" data-confirm="{{ _('Clear all of your saved translations? This cannot be undone.') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="confirm" value="yes"><button class="button button-danger button-compact" type="submit">{{ _('Clear history') }}</button>
+      </form>
+    </div>
+    <div class="translation-history-list" data-translation-history>
+      {% if translations %}
+        {% for item in translations %}
+        <article class="translation-history-item">
+          <div class="history-languages"><span>{{ languages[item['source_language']] }}</span><span aria-hidden="true">→</span><span>{{ languages[item['target_language']] }}</span><time>{{ item['created_at'][:16].replace('T', ' ') }}</time></div>
+          <p lang="{{ item['source_language'] }}">{{ item['source_text'] }}</p>
+          <p class="history-result" lang="{{ item['target_language'] }}">{{ item['translated_text'] }}</p>
+        </article>
+        {% endfor %}
+      {% else %}<p class="empty-inline" data-history-empty>{{ _('Your translations will be saved here for this account.') }}</p>{% endif %}
+    </div>
+  </section>
+</section>
+{% endblock %}

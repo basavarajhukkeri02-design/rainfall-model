@@ -1,43 +1,36 @@
 {% extends 'base.html' %}
-{% block title %}About AgriRain{% endblock %}
+{% block title %}{{ _('About AgriRain') }}{% endblock %}
 {% block content %}
 <section class="page-hero">
     <div class="wrap">
-        <p class="eyebrow">ABOUT AGRIRAIN</p>
-        <h1>Weather context for<br>everyday farm planning.</h1>
-        <p>A college mini-project showing how an API forecast, a machine learning model, and a small local database can
-            work together.</p>
+        <p class="eyebrow">{{ _('ABOUT AGRIRAIN') }}</p>
+        <h1>{{ _('Weather context for everyday farm planning.') }}</h1>
+        <p>{{ _('A college mini-project showing how an API forecast, a machine learning model, and a small local database can work together.') }}</p>
     </div>
 </section>
 <section class="wrap about-grid">
     <article class="panel">
-        <p class="eyebrow">HOW IT WORKS</p>
-        <h2>Three separate pieces</h2>
+        <p class="eyebrow">{{ _('HOW IT WORKS') }}</p>
+        <h2>{{ _('Three separate pieces') }}</h2>
         <ol class="steps">
-            <li><strong>Forecast service</strong>
-                <p>Open-Meteo provides daily minimum and maximum temperature, daily rainfall total, and hourly relative
-                    humidity forecast for the selected district coordinates.</p>
+            <li><strong>{{ _('Forecast service') }}</strong>
+                <p>{{ _('Open-Meteo provides daily minimum and maximum temperature, daily rainfall total, and hourly relative humidity forecast for the selected district coordinates.') }}</p>
             </li>
-            <li><strong>ML estimate</strong>
-                <p>A Random Forest classifier maps those four forecast values to a rain-likelihood label. If supported,
-                    its probability is displayed as an estimate.</p>
+            <li><strong>{{ _('ML estimate') }}</strong>
+                <p>{{ _('A Random Forest classifier maps those four forecast values to a rain-likelihood label. If supported, its probability is displayed as an estimate.') }}</p>
             </li>
-            <li><strong>Prediction history</strong>
-                <p>SQLite stores the district, model result, available probability, forecast values, and save time so
-                    previous requests can be reviewed.</p>
+            <li><strong>{{ _('Prediction history') }}</strong>
+                <p>{{ _('SQLite stores the district, model result, available probability, forecast values, and save time so previous requests can be reviewed.') }}</p>
             </li>
         </ol>
     </article>
     <aside class="panel limitation-panel">
-        <p class="eyebrow">IMPORTANT LIMITATION</p>
-        <h2>Not locally validated</h2>
-        <p>The included WeatherAUS dataset contains Australian observations. A held-out test on that dataset does not
-            demonstrate performance in Karnataka. The model is included for a learning demonstration only.</p>
-        <p>The web forecast comes from Open-Meteo; the classifier output is a separate experimental estimate. Neither
-            should be treated as a guaranteed rainfall outcome or as a replacement for official local advisories.</p>
-        <h3>Path to a stronger local model</h3>
-        <p>Collect quality-controlled Karnataka station data with matching forecast-time inputs and rainfall labels, use
-            time-based evaluation, and report performance for representative districts and seasons.</p>
+        <p class="eyebrow">{{ _('IMPORTANT LIMITATION') }}</p>
+        <h2>{{ _('Not locally validated') }}</h2>
+        <p>{{ _('The included WeatherAUS dataset contains Australian observations. A held-out test on that dataset does not demonstrate performance in Karnataka. The model is included for a learning demonstration only.') }}</p>
+        <p>{{ _('The web forecast comes from Open-Meteo; the classifier output is a separate experimental estimate. Neither should be treated as a guaranteed rainfall outcome or as a replacement for official local advisories.') }}</p>
+        <h3>{{ _('Path to a stronger local model') }}</h3>
+        <p>{{ _('Collect quality-controlled Karnataka station data with matching forecast-time inputs and rainfall labels, use time-based evaluation, and report performance for representative districts and seasons.') }}</p>
     </aside>
 </section>
 {% endblock %}

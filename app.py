@@ -3,20 +3,25 @@
 from datetime import datetime
 from contextlib import contextmanager
 from functools import wraps
+from collections import defaultdict, deque
+import html
 import os
 from pathlib import Path
 import secrets
 import sqlite3
 import re
 import threading
+import time
 import webbrowser
+from urllib.parse import urlsplit
 
 import joblib
 import numpy as np
 import pandas as pd
 import requests
-from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash as flask_flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
+from translations import LANGUAGES, translate
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -26,6 +31,15 @@ OPEN_METEO_URL = os.environ.get(
     "OPEN_METEO_API_URL", "https://api.open-meteo.com/v1/forecast"
 )
 FEATURES = ["MinTemp", "MaxTemp", "Rainfall", "Humidity3pm"]
+TRANSLATION_URL = "https://translation.googleapis.com/language/translate/v2"
+TRANSLATION_MAX_CHARS = 1000
+TRANSLATION_RATE_LIMIT = 10
+TRANSLATION_RATE_WINDOW = 60
+TRANSLATION_LANGUAGES = {
+    "kn": "ಕನ್ನಡ", "en": "English", "hi": "हिन्दी", "te": "తెలుగు",
+    "ta": "தமிழ்", "ml": "മലയാളം", "mr": "मराठी", "bn": "বাংলা",
+    "gu": "ગુજરાતી", "pa": "ਪੰਜਾਬੀ", "ur": "اردو",
+}
 DISTRICTS = {
     "Bengaluru": (12.9716, 77.5946), "Belagavi": (15.8497, 74.4977),
     "Dharwad": (15.4589, 75.0078), "Vijayapura": (16.8302, 75.7100),
@@ -42,6 +56,14 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "").lower() in {"1", "true", "yes"},
 )
+_translation_request_times = defaultdict(deque)
+_translation_rate_lock = threading.Lock()
+
+
+def flash(message, category="message", *args, **kwargs):
+    """Localize server-generated notices using the visitor's session language."""
+    language = session.get("ui_language", "en")
+    flask_flash(translate(message, language), category, *args, **kwargs)
 
 
 def get_db():
@@ -73,15 +95,26 @@ def protect_post_requests():
     if "_csrf_token" not in session:
         session["_csrf_token"] = secrets.token_urlsafe(32)
     if request.method == "POST":
-        supplied = request.form.get("_csrf_token", "")
+        supplied = (
+            request.headers.get("X-CSRF-Token", "")
+            if request.is_json else request.form.get("_csrf_token", "")
+        )
         expected = session.get("_csrf_token", "")
         if not supplied or not secrets.compare_digest(supplied, expected):
+            if request.is_json:
+                return jsonify(error=translate("Your session expired. Refresh the page and try again.", session.get("ui_language", "en"))), 400
             abort(400)
 
 
 @app.context_processor
 def inject_csrf_token():
-    return {"csrf_token": session.get("_csrf_token", "")}
+    language = session.get("ui_language", "en")
+    return {
+        "csrf_token": session.get("_csrf_token", ""),
+        "ui_language": language,
+        "ui_languages": LANGUAGES,
+        "_": lambda message: translate(message, language),
+    }
 
 
 def init_db():
@@ -106,6 +139,17 @@ def init_db():
                 temperature_max REAL,
                 expected_rainfall REAL,
                 humidity REAL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS translation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                source_language TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                source_text TEXT NOT NULL,
+                translated_text TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
         """)
@@ -249,7 +293,9 @@ def login_required(view):
                 "SELECT 1 FROM users WHERE id = ?", (user_id,)
             ).fetchone()
         if not user_exists:
+            language = session.get("ui_language", "en")
             session.clear()
+            session["ui_language"] = language
             flash("Please sign in to continue.", "error")
             return redirect(url_for("login"))
         return view(*args, **kwargs)
@@ -275,6 +321,44 @@ def profile_summary(user_id):
         """, (user_id,)).fetchone()
 
 
+def translation_rate_limited(user_id):
+    """Allow at most ten translations per user in a rolling one-minute window."""
+    now = time.monotonic()
+    with _translation_rate_lock:
+        requests_for_user = _translation_request_times[user_id]
+        while requests_for_user and now - requests_for_user[0] >= TRANSLATION_RATE_WINDOW:
+            requests_for_user.popleft()
+        if len(requests_for_user) >= TRANSLATION_RATE_LIMIT:
+            return True
+        requests_for_user.append(now)
+        return False
+
+
+def translate_with_google(text, source, target):
+    """Call Google Cloud Translation Basic without exposing its key to clients."""
+    api_key = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("Translation is not configured yet. Add a Google Cloud Translation API key to the server as GOOGLE_TRANSLATE_API_KEY.")
+
+    response = requests.post(
+        TRANSLATION_URL,
+        params={"key": api_key},
+        json={"q": text, "source": source, "target": target, "format": "text"},
+        timeout=(4, 15),
+    )
+    if response.status_code in {400, 401, 403, 429}:
+        app.logger.warning("Google Translation rejected a request (HTTP %s)", response.status_code)
+        raise ValueError("The translation provider rejected this request. Check API access, billing, and quota settings.")
+    response.raise_for_status()
+    try:
+        translated = response.json()["data"]["translations"][0]["translatedText"]
+    except (ValueError, KeyError, IndexError, TypeError) as error:
+        raise ValueError("The translation provider returned an invalid response.") from error
+    if not isinstance(translated, str) or not translated.strip():
+        raise ValueError("The translation provider returned an empty result.")
+    return html.unescape(translated)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("user_id"):
@@ -290,7 +374,9 @@ def login():
                     "SELECT id, email, password_hash FROM users WHERE email = ?", (email,)
                 ).fetchone()
             if user and check_password_hash(user["password_hash"], password):
+                language = session.get("ui_language", "en")
                 session.clear()
+                session["ui_language"] = language
                 session["user_id"] = user["id"]
                 session["user_email"] = user["email"]
                 return redirect(url_for("home"))
@@ -332,9 +418,24 @@ def register():
 @app.post("/logout")
 @login_required
 def logout():
+    language = session.get("ui_language", "en")
     session.clear()
-    flash("You have been signed out.", "success")
+    session["ui_language"] = language
+    flash(translate("You have been signed out.", language), "success")
     return redirect(url_for("login"))
+
+
+@app.post("/set-language")
+def set_language():
+    language = request.form.get("language", "")
+    if language not in LANGUAGES:
+        abort(400)
+    session["ui_language"] = language
+    destination = request.form.get("next", "/")
+    parsed = urlsplit(destination)
+    if not destination.startswith("/") or destination.startswith("//") or parsed.scheme or parsed.netloc:
+        destination = "/"
+    return redirect(destination)
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -364,7 +465,12 @@ def home():
             flash(model_error, "error")
         else:
             try:
-                model_weather = read_manual_weather(request.form)
+                manual_fields = (
+                    "observed_min_temp", "observed_max_temp",
+                    "observed_rainfall", "observed_humidity",
+                )
+                has_manual_values = any(request.form.get(name, "").strip() for name in manual_fields)
+                model_weather = read_manual_weather(request.form) if has_manual_values or weather is None else weather
                 prediction, probability = prediction_for(model_bundle, model_weather)
                 with database_connection() as connection:
                     connection.execute("""
@@ -380,14 +486,18 @@ def home():
                 session["prediction_result"] = {
                     "district": selected, "prediction": prediction,
                     "probability": probability,
-                    "input_source": "forecast or edited weather values",
+                    "input_source": (
+                        "user-entered observations" if weather is None
+                        else "forecast or edited weather values" if has_manual_values
+                        else "live forecast"
+                    ),
                     "weather": model_weather,
                 }
                 return redirect(url_for("home", district=selected))
             except Exception:
                 app.logger.exception("Prediction could not be completed")
                 flash(
-                    "Prediction needs a loaded model and four valid weather values. Review the values and try again.",
+                    "Prediction needs a loaded model and all four valid weather values. Review the values and try again.",
                     "error",
                 )
 
@@ -435,6 +545,103 @@ def clear_history():
 @login_required
 def about():
     return render_template("about.html")
+
+
+@app.route("/translator")
+@login_required
+def translator():
+    with database_connection() as connection:
+        translations = connection.execute(
+            """SELECT source_language, target_language, source_text, translated_text, created_at
+               FROM translation_history WHERE user_id = ? ORDER BY id DESC LIMIT 10""",
+            (session["user_id"],),
+        ).fetchall()
+    return render_template(
+        "translator.html", languages=TRANSLATION_LANGUAGES,
+        max_chars=TRANSLATION_MAX_CHARS, translations=translations,
+        translation_configured=bool(os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()),
+    )
+
+
+@app.post("/api/translate")
+def api_translate():
+    """Validate, rate-limit, call the provider, and store a user's translation."""
+    language = session.get("ui_language", "en")
+
+    def localized(message):
+        return translate(message, language)
+
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify(error=localized("Please sign in to use the translator.")), 401
+    with database_connection() as connection:
+        if not connection.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+            language = session.get("ui_language", "en")
+            session.clear()
+            session["ui_language"] = language
+            return jsonify(error=localized("Your session has expired. Please sign in again.")), 401
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error=localized("Send a valid translation request.")), 400
+    text = payload.get("text")
+    source = payload.get("source")
+    target = payload.get("target")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify(error=localized("Enter a word or sentence to translate.")), 400
+    text = text.strip()
+    if len(text) > TRANSLATION_MAX_CHARS:
+        limit_message = localized("Please keep the text to {limit} characters or fewer.").replace("{limit}", str(TRANSLATION_MAX_CHARS))
+        return jsonify(error=limit_message), 400
+    if (not isinstance(source, str) or not isinstance(target, str)
+            or source not in TRANSLATION_LANGUAGES or target not in TRANSLATION_LANGUAGES):
+        return jsonify(error=localized("Choose a supported source and target language.")), 400
+    if source == target:
+        return jsonify(error=localized("Choose two different languages.")), 400
+    if translation_rate_limited(user_id):
+        return jsonify(error=localized("You have reached the limit of 10 translations per minute. Please wait and try again.")), 429, {
+            "Retry-After": str(TRANSLATION_RATE_WINDOW),
+        }
+
+    try:
+        translated = translate_with_google(text, source, target)
+    except RuntimeError:
+        app.logger.warning("Google Translation is not configured")
+        return jsonify(error=localized("Translation is not configured yet. Add a Google Cloud Translation API key to the server as GOOGLE_TRANSLATE_API_KEY.")), 503
+    except ValueError as error:
+        return jsonify(error=localized(str(error))), 502
+    except requests.RequestException:
+        app.logger.warning("Google Translation service is currently unreachable")
+        return jsonify(error=localized("The translation service is temporarily unavailable. Please try again shortly.")), 503
+
+    created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    with database_connection() as connection:
+        connection.execute(
+            """INSERT INTO translation_history
+               (user_id, source_language, target_language, source_text, translated_text, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, source, target, text, translated, created_at),
+        )
+    return jsonify(
+        translated_text=translated,
+        source_language=source,
+        target_language=target,
+        created_at=created_at,
+    )
+
+
+@app.post("/clear-translation-history")
+@login_required
+def clear_translation_history():
+    if request.form.get("confirm") != "yes":
+        flash("Translation history was not cleared because confirmation was not received.", "error")
+        return redirect(url_for("translator"))
+    with database_connection() as connection:
+        connection.execute(
+            "DELETE FROM translation_history WHERE user_id = ?", (session["user_id"],)
+        )
+    flash("Translation history cleared.", "success")
+    return redirect(url_for("translator"))
 
 
 @app.errorhandler(500)

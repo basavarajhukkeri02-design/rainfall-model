@@ -1,6 +1,6 @@
 # AgriRain — ML-Based Rainfall Prediction for Farmers
 
-AgriRain is a local Flask college mini-project for ten Karnataka districts. It combines Open-Meteo forecast data with an experimental scikit-learn classifier and stores user accounts and each account's prediction records in SQLite. The weather forecast and model estimate are shown as separate outputs.
+AgriRain is a local Flask college mini-project for ten Karnataka districts. It combines Open-Meteo forecast data with an experimental scikit-learn classifier, adds a multilingual word translator, and stores user accounts and each account's prediction records in SQLite. The weather forecast and model estimate are shown as separate outputs.
 
 The first page is the login screen. A visitor can create an account with an email and password, then sign in. Passwords are stored as Werkzeug password hashes, not plain text. Prediction history is scoped to the signed-in account; records from the earlier anonymous demo remain unassigned and are not shown to any new account. State-changing forms require a session-bound CSRF token. Set `FLASK_SECRET_KEY` to a private, stable random value when you need sessions to survive app restarts; without it a fresh development secret is generated at process start.
 
@@ -10,6 +10,7 @@ The first page is the login screen. A visitor can create an account with an emai
 2. The Flask application requests the one-day Open-Meteo forecast. It shows minimum and maximum temperature, daily rainfall total, and relative humidity forecast at 3 PM local time.
 3. The saved scikit-learn pipeline receives those four values in the training feature order: `MinTemp`, `MaxTemp`, `Rainfall`, `Humidity3pm`. Its label and, when available, positive-class probability are displayed as an experimental estimate.
 4. Successful predictions are inserted once into SQLite. The POST/redirect/GET flow means refreshing the result page does not submit the form again.
+5. Signed-in users can translate text between eleven Indian languages from the Language Translator page. Translations are supplied by Google Cloud Translation Basic and saved to the user's private history.
 
 The model is trained on Australian weather observations. A held-out split measures performance on that dataset only; this is **not validation for Karnataka**. Train on quality-controlled local observations and evaluate across seasons and districts before using this for real decisions. The model probability is an estimate, not a guarantee. This student demonstration has not had production security testing.
 
@@ -46,6 +47,10 @@ The main hero uses a local copy of the rain-field image from the linked Vocal ar
 
 The complete files are in this project folder: `app.py`, `train_model.py`, `requirements.txt`, `templates/index.html`, `templates/history.html`, `templates/about.html`, `static/css/style.css`, and `static/js/script.js`. `templates/base.html` provides shared navigation and layout, and `templates/error.html` provides a friendly server-error page.
 
+The translator page is implemented in `templates/translator.html`; it uses the existing `static/css/style.css` and `static/js/script.js` files. No additional Python package is required.
+
+The site language selector in the navigation switches the farmer dashboard, navigation, and common page controls between English and Kannada. The preference is kept in the current browser.
+
 ## K. Windows installation and run
 
 Use PowerShell from the project directory. Python 3.13 is supported by current releases of the listed packages.
@@ -66,6 +71,16 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+### Configure the translator
+
+The translator uses Google Cloud Translation Basic v2. Create a Google Cloud project, enable the Cloud Translation API, enable billing, and create an API key. Set the key in the server environment; never put it in a template or JavaScript file. In PowerShell, for the current terminal session:
+
+```powershell
+$env:GOOGLE_TRANSLATE_API_KEY = "your-google-cloud-api-key"
+```
+
+Run the app from that same terminal. In deployment, add `GOOGLE_TRANSLATE_API_KEY` as a private environment variable in the hosting service. Restrict the key to the Cloud Translation API and, where practical, to the server's IP address. Google's current pricing page lists the first 500,000 characters per month under a monthly $10 credit; additional usage may be billed, and billing must be enabled. Review current pricing and configure quotas or budget alerts before public use. Without a key, the rest of AgriRain works and the translator returns a clear setup error instead of a fabricated translation.
+
 Place `weatherAUS.csv` in `data\weatherAUS.csv` or in the project root. This workspace already has a root-level copy. Train the model once, then start the application:
 
 ```powershell
@@ -85,6 +100,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+$env:GOOGLE_TRANSLATE_API_KEY = "your-google-cloud-api-key"
 python train_model.py
 python app.py
 ```
@@ -147,8 +163,17 @@ This chronological holdout is still only an Australian dataset assessment, not a
 - [ ] Temporarily disconnect from the network; a friendly forecast error appears and the server remains available.
 - [ ] Rename the model file temporarily; the app shows the retraining instruction instead of crashing.
 - [ ] Test narrow/mobile viewport; cards and tables remain usable (tables can scroll horizontally).
+- [ ] Open Language Translator and try Kannada to English, English to Kannada, Hindi to Kannada, Kannada to Hindi, English to Telugu, and Telugu to English.
+- [ ] Verify copy, clear text, swap languages, and read-aloud controls in a browser with a voice installed for the selected language.
+- [ ] Confirm translations appear only in the signed-in account and clearing translator history leaves rainfall history intact.
+- [ ] Try empty, unsupported, oversized, and repeated translation requests; each should show a clear error or rate-limit message.
+- [ ] Try the translator without `GOOGLE_TRANSLATE_API_KEY`; it should explain that server configuration is required.
 
-Automated test command: `python -m unittest discover -s tests`. (Test files are included in `tests/`.)
+Automated test command: `python -m unittest discover -s tests`. Translator API tests mock Google Cloud and incur no API usage.
+
+## Website languages
+
+Choose a site language from the navigation menu: English (default), Kannada, Hindi, Telugu, Tamil, Malayalam, or Marathi. The selection is stored in the Flask session and applies across the dashboard, forecast, history, account, About, and translator pages. Interface labels and system messages use the local catalog in `translations.py`; user-entered text and live forecast data are kept as data.
 
 ## P. Common issues
 
