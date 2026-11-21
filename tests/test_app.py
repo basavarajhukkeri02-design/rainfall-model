@@ -1,22 +1,99 @@
 import tempfile
 import unittest
 import secrets
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import app
+import joblib
+import numpy as np
+import pandas as pd
 import requests
+from zoneinfo import ZoneInfo
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
 class FakePipeline:
     classes_ = [0, 1]
 
-    def predict(self, _features):
-        return [1]
+    def __init__(self, probability=0.8):
+        self.probability = probability
+        self.received_columns = None
 
-    def predict_proba(self, _features):
-        return [[0.2, 0.8]]
+    def predict_proba(self, features):
+        self.received_columns = list(features.columns)
+        return [[1 - self.probability, self.probability]]
+
+
+MODEL_THRESHOLD = 0.17524123715314846
+
+
+def fake_bundle(probability=0.8):
+    return {
+        "pipeline": FakePipeline(probability),
+        "features": list(app.FEATURES),
+        "threshold": MODEL_THRESHOLD,
+        "positive_label": 1,
+    }
+
+
+def weather_for(district, features=None):
+    values = features or {
+        "Rainfall_Lag_1": 1.0, "Rainfall_Lag_2": 2.0,
+        "Rainfall_Lag_3": 3.0, "Rainfall_Lag_7": 0.0,
+        "Rolling_Mean_3": 2.0, "Rolling_Sum_7": 12.0,
+        "Month": 11, "Day_Of_Year": 324, "District": district,
+    }
+    return {
+        "district": district, "forecast_date": "2026-11-20",
+        "prediction_date": "2026-11-21", "min_temp": 19.0,
+        "max_temp": 29.0, "rainfall": 2.5, "humidity": 72.0,
+        "current_temp": 24.0, "weather_code": 0,
+        "weather_condition": "sunny", "weather_condition_label": "Sunny",
+        "forecast_days": [
+            {"date": (datetime(2026, 11, 20) + timedelta(days=offset)).date().isoformat(),
+             "min_temp": 19.0, "max_temp": 29.0, "rainfall": 2.5,
+             "weather_code": 0, "weather_condition": "sunny", "weather_condition_label": "Sunny"}
+            for offset in range(7)
+        ],
+        "karnataka_history_features": dict(values),
+        "karnataka_history_error": None,
+    }
+
+
+def open_meteo_payload(daily_overrides=None, hourly_overrides=None):
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    today = now.date()
+    dates = [(today - timedelta(days=offset)).isoformat() for offset in range(7, -7, -1)]
+    daily = {
+        "time": dates,
+        "temperature_2m_min": [18.0] * len(dates),
+        "temperature_2m_max": [30.0] * len(dates),
+        "rain_sum": [float(index) for index in range(len(dates))],
+        "weather_code": [0] * len(dates),
+    }
+    times = sorted({now.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:00"), f"{today.isoformat()}T15:00"})
+    hourly = {"time": times, "relative_humidity_2m": [70.0] * len(times), "temperature_2m": [25.0] * len(times)}
+    daily.update(daily_overrides or {})
+    hourly.update(hourly_overrides or {})
+    return {"daily": daily, "hourly": hourly}
+
+
+class WeatherResponse:
+    def __init__(self, payload=None, status_code=200):
+        self.payload = payload or open_meteo_payload()
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            response = requests.Response()
+            response.status_code = self.status_code
+            raise requests.HTTPError(f"HTTP {self.status_code}", response=response)
+
+    def json(self):
+        return self.payload
 
 
 class AgriRainAppTests(unittest.TestCase):
@@ -24,6 +101,8 @@ class AgriRainAppTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         app.app.config.update(TESTING=True, DATABASE=str(Path(self.temp_dir.name) / "test.db"))
         app.init_db()
+        with app._weather_cache_lock:
+            app._weather_cache.clear()
         self.client = app.app.test_client()
         with app.database_connection() as connection:
             cursor = connection.execute(
@@ -37,10 +116,7 @@ class AgriRainAppTests(unittest.TestCase):
             user_session["_csrf_token"] = secrets.token_urlsafe(32)
         with app._translation_rate_lock:
             app._translation_request_times.clear()
-        self.weather = {
-            "forecast_date": "2026-10-25", "min_temp": 19.0,
-            "max_temp": 29.0, "rainfall": 2.5, "humidity": 72.0,
-        }
+        self.weather = weather_for("Mysuru")
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -68,7 +144,7 @@ class AgriRainAppTests(unittest.TestCase):
             headers={"X-CSRF-Token": token},
         )
 
-    @patch("app.load_model", return_value=({"pipeline": FakePipeline(), "features": app.FEATURES}, None))
+    @patch("app.load_model", return_value=(fake_bundle(), None))
     @patch("app.get_weather")
     def test_prediction_is_saved_once_and_refresh_does_not_resubmit(self, get_weather, _model):
         get_weather.return_value = self.weather
@@ -80,10 +156,59 @@ class AgriRainAppTests(unittest.TestCase):
         self.client.get("/")
         self.assertEqual(self.count_records(), 1)
 
+    @patch("app.load_model", return_value=(fake_bundle(0.25), None))
+    @patch("app.get_weather")
+    def test_prediction_page_shows_weather_date_target_date_probability_and_source(self, get_weather, _model):
+        get_weather.return_value = self.weather
+        response = self.post_form("/", {"district": "Mysuru"})
+        page = self.client.get(response.location, follow_redirects=True)
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Rain likely", page.data)
+        self.assertIn(b"Forecast values are for 2026-11-20", page.data)
+        self.assertIn(b"Estimate for: 2026-11-21", page.data)
+        self.assertIn(b"Estimated model probability: 25.0%", page.data)
+        self.assertIn(b"Current weather (reference)", page.data)
+        self.assertIn(b"previous seven days of district rainfall", page.data)
+
+    @patch("app.load_model", return_value=(fake_bundle(), None))
+    @patch("app.get_weather")
+    def test_dashboard_renders_values_week_forecast_icons_and_navigation(self, get_weather, _model):
+        get_weather.return_value = self.weather
+        page = self.client.get("/?district=Mysuru")
+        self.assertEqual(page.status_code, 200)
+        for label in (b"Minimum Temperature", b"Maximum Temperature", b"Rainfall", b"Humidity"):
+            self.assertIn(label, page.data)
+        self.assertIn(b"weather-icon--sunny", page.data)
+        self.assertEqual(len(re.findall(rb'<article class="forecast-day', page.data)), 7)
+        self.assertIn(b"Rainfall Prediction", page.data)
+        self.assertIn(b"History", page.data)
+        self.assertIn(b"Logout", page.data)
+        css = self.client.get("/static/css/style.css")
+        self.assertEqual(css.status_code, 200)
+        self.assertIn(b"max-width:620px", css.data)
+        self.assertIn(b"weather-icon--clear-night", css.data)
+        css.close()
+
+    @patch("app.load_model", return_value=(fake_bundle(), None))
+    @patch("app.get_weather")
+    def test_missing_rainfall_history_is_explained_without_showing_a_result(self, get_weather, _model):
+        missing_history = weather_for("Mysuru")
+        missing_history["karnataka_history_features"] = None
+        missing_history["karnataka_history_error"] = "Open-Meteo did not return valid rainfall for all seven prior days"
+        get_weather.return_value = missing_history
+
+        response = self.post_form("/", {"district": "Mysuru"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"complete recent rainfall history is missing or invalid", response.data)
+        self.assertNotIn(b"Estimated model probability:", response.data)
+        self.assertEqual(self.count_records(), 0)
+
     @patch("app.get_weather")
     def test_end_to_end_real_model_prediction_is_saved(self, get_weather):
-        get_weather.return_value = self.weather
-        response = self.post_form("/", {"district": "Bengaluru"})
+        get_weather.return_value = weather_for("Bengaluru Urban")
+        response = self.post_form("/", {"district": "Bengaluru Urban"})
         self.assertEqual(response.status_code, 302)
         page = self.client.get(response.location, follow_redirects=True)
         self.assertEqual(page.status_code, 200)
@@ -96,6 +221,263 @@ class AgriRainAppTests(unittest.TestCase):
         self.assertGreaterEqual(record["rainfall_probability"], 0)
         self.assertLessEqual(record["rainfall_probability"], 1)
         self.assertEqual(record["humidity"], self.weather["humidity"])
+
+    def test_model_loader_uses_karnataka_bundle_schema_and_threshold(self):
+        bundle, error = app.load_model()
+        self.assertIsNone(error)
+        self.assertEqual(app.MODEL_PATH, app.BASE_DIR / "karnataka_model" / "rainfall_model.pkl")
+        self.assertEqual(bundle["features"], [
+            "Rainfall_Lag_1", "Rainfall_Lag_2", "Rainfall_Lag_3", "Rainfall_Lag_7",
+            "Rolling_Mean_3", "Rolling_Sum_7", "Month", "Day_Of_Year", "District",
+        ])
+        self.assertEqual(bundle["threshold"], MODEL_THRESHOLD)
+        self.assertEqual(bundle["positive_label"], 1)
+        self.assertEqual(list(bundle["pipeline"].feature_names_in_), bundle["features"])
+
+    def test_threshold_and_feature_order_are_applied_from_bundle(self):
+        for probability, expected in (
+            (MODEL_THRESHOLD - 1e-8, "Rain less likely"),
+            (MODEL_THRESHOLD, "Rain likely"),
+            (MODEL_THRESHOLD + 1e-8, "Rain likely"),
+        ):
+            with self.subTest(probability=probability):
+                bundle = fake_bundle(probability)
+                result, actual_probability = app.prediction_for(bundle, weather_for("Mysuru"))
+                self.assertEqual(result, expected)
+                self.assertAlmostEqual(actual_probability, probability)
+                self.assertEqual(bundle["pipeline"].received_columns, bundle["features"])
+
+    def test_prediction_rejects_missing_nonfinite_and_mismatched_history(self):
+        weather = weather_for("Mysuru")
+        weather["karnataka_history_features"].pop("Rainfall_Lag_7")
+        with self.assertRaisesRegex(ValueError, "features do not match"):
+            app.prediction_for(fake_bundle(), weather)
+
+        weather = weather_for("Mysuru")
+        weather["karnataka_history_features"]["Rainfall_Lag_1"] = np.nan
+        with self.assertRaisesRegex(ValueError, "incomplete or invalid"):
+            app.prediction_for(fake_bundle(), weather)
+
+        weather = weather_for("Mysuru")
+        weather["karnataka_history_features"]["District"] = "Ballari"
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            app.prediction_for(fake_bundle(), weather)
+
+    def test_history_builder_rejects_a_missing_prior_day(self):
+        feature_date = "2026-11-20"
+        dates = [(datetime.fromisoformat(feature_date).date() - timedelta(days=offset)).isoformat() for offset in range(1, 8)]
+        dates.remove("2026-11-17")
+        features, error = app.build_karnataka_history_features(dates, [0.0] * len(dates), feature_date, "Mysuru")
+        self.assertIsNone(features)
+        self.assertIn("all seven prior days", error)
+
+    def test_weather_adapter_rejects_an_outdated_forecast_response(self):
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        old_day = today - timedelta(days=2)
+        dates = [(old_day - timedelta(days=offset)).isoformat() for offset in range(7, -1, -1)]
+        payload = {
+            "daily": {
+                "time": dates, "temperature_2m_min": [18.0] * 8,
+                "temperature_2m_max": [30.0] * 8, "rain_sum": [1.0] * 8,
+            },
+            "hourly": {"time": [], "relative_humidity_2m": []},
+        }
+
+        class Response:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return payload
+
+        with patch("app.requests.get", return_value=Response()):
+            with self.assertRaisesRegex(ValueError, "Today's forecast date is missing"):
+                app.get_weather("Mysuru")
+
+    def test_all_31_districts_render_and_run_through_flask(self):
+        districts = set(app.DISTRICTS)
+        self.assertEqual(len(districts), 31)
+        bundle = joblib.load(app.MODEL_PATH)
+        encoder = bundle["pipeline"].named_steps["preprocessor"].named_transformers_["district"].named_steps["encoder"]
+        self.assertEqual(districts, set(encoder.categories_[0]))
+        with patch("app.get_weather", side_effect=lambda district: weather_for(district)):
+            page = self.client.get("/")
+            self.assertEqual(page.status_code, 200)
+            select = page.get_data(as_text=True).split('<select id="district"', 1)[1].split("</select>", 1)[0]
+            rendered = set(re.findall(r'<option value="([^"]+)"', select))
+            self.assertEqual(rendered, districts)
+
+            for district in sorted(districts):
+                with self.subTest(district=district):
+                    response = self.post_form("/", {"district": district})
+                    self.assertEqual(response.status_code, 302)
+
+        with app.database_connection() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT district FROM prediction_history WHERE user_id = ?", (self.user_id,)
+            ).fetchall()
+        self.assertEqual({row[0] for row in rows}, districts)
+
+    def test_default_district_is_bengaluru_urban(self):
+        with patch("app.get_weather", return_value=weather_for("Bengaluru Urban")):
+            response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<option value="Bengaluru Urban" selected>', response.data)
+
+    def test_karnataka_model_predicts_latest_prepared_row_for_each_district(self):
+        data = pd.read_csv(
+            app.BASE_DIR / "karnataka_ml_features.csv",
+            usecols=["Date", *app.FEATURES],
+            engine="c",
+        )
+        bundle, error = app.load_model()
+        self.assertIsNone(error)
+        self.assertEqual(set(data["District"].unique()), set(app.DISTRICTS))
+        for district, group in data.groupby("District"):
+            with self.subTest(district=district):
+                latest = group.sort_values("Date").iloc[-1]
+                inputs = {name: latest[name] for name in bundle["features"]}
+                weather = weather_for(district, inputs)
+                result, probability = app.prediction_for(bundle, weather)
+                self.assertIn(result, {"Rain likely", "Rain less likely"})
+                self.assertTrue(np.isfinite(probability))
+                self.assertGreaterEqual(probability, 0)
+                self.assertLessEqual(probability, 1)
+
+    def test_open_meteo_adapter_uses_each_district_location_and_builds_history(self):
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        response = WeatherResponse()
+        for district, coordinates in app.DISTRICTS.items():
+            with self.subTest(district=district), patch("app.requests.get", return_value=response) as get:
+                weather = app.get_weather(district)
+                params = get.call_args.kwargs["params"]
+                self.assertEqual((params["latitude"], params["longitude"]), coordinates)
+                self.assertEqual(params["past_days"], 7)
+                self.assertEqual(params["forecast_days"], 7)
+                self.assertEqual(params["timezone"], "Asia/Kolkata")
+                self.assertEqual(weather["district"], district)
+                self.assertEqual(weather["forecast_date"], today.isoformat())
+                self.assertEqual(weather["weather_code"], 0)
+                local_hour = datetime.now(ZoneInfo("Asia/Kolkata")).hour
+                expected_condition = "clear-night" if local_hour < 6 or local_hour >= 18 else "sunny"
+                self.assertEqual(weather["weather_condition"], expected_condition)
+                self.assertEqual(weather["current_temp"], 25.0)
+                self.assertEqual(len(weather["forecast_days"]), 7)
+                self.assertEqual(weather["prediction_date"], (today + timedelta(days=1)).isoformat())
+                self.assertEqual(weather["karnataka_history_features"]["District"], district)
+                self.assertEqual(list(weather["karnataka_history_features"]), app.FEATURES)
+                self.assertIsNone(weather["karnataka_history_error"])
+
+    def test_open_meteo_weather_codes_map_to_all_animated_icon_conditions(self):
+        expected = {
+            0: ("sunny", "Sunny"),
+            2: ("partly-cloudy", "Partly cloudy"),
+            3: ("cloudy", "Cloudy"),
+            61: ("rainy", "Rain"),
+            95: ("thunderstorm", "Thunderstorm"),
+        }
+        for code, condition in expected.items():
+            with self.subTest(code=code):
+                self.assertEqual(app.weather_condition_for_code(code), condition)
+        self.assertEqual(app.weather_condition_for_code(0, is_night=True), ("clear-night", "Clear night"))
+
+    def test_forecast_week_is_date_ordered_and_contains_weather_metrics(self):
+        with patch("app.requests.get", return_value=WeatherResponse()):
+            weather = app.get_weather("Mysuru")
+        days = weather["forecast_days"]
+        self.assertEqual(len(days), 7)
+        self.assertEqual(days[0]["date"], weather["forecast_date"])
+        self.assertEqual(days[-1]["date"], (datetime.now(ZoneInfo("Asia/Kolkata")).date() + timedelta(days=6)).isoformat())
+        self.assertTrue(all({"min_temp", "max_temp", "rainfall", "weather_condition"} <= day.keys() for day in days))
+
+    def test_open_meteo_adapter_uses_forecast_day_weather_code(self):
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        dates = [(today - timedelta(days=offset)).isoformat() for offset in range(7, -2, -1)]
+        codes = [0] * len(dates)
+        codes[dates.index(today.isoformat())] = 95
+        payload = open_meteo_payload({"weather_code": codes})
+        with patch("app.requests.get", return_value=WeatherResponse(payload)):
+            weather = app.get_weather("Bengaluru Urban")
+        self.assertEqual(weather["weather_code"], 95)
+        self.assertEqual(weather["weather_condition"], "thunderstorm")
+        self.assertEqual(weather["weather_condition_label"], "Thunderstorm")
+
+    def test_weather_retry_and_duplicate_suppression_for_multiple_districts(self):
+        districts = ("Bagalkot", "Mysuru", "Yadgir")
+        for district in districts:
+            with self.subTest(district=district):
+                response = WeatherResponse()
+                with patch("app.requests.get", side_effect=[requests.Timeout("temporary"), response]) as get, \
+                     patch("app.time.sleep"):
+                    first = app.get_weather(district)
+                    second = app.get_weather(district)
+                self.assertEqual(get.call_count, 2)
+                self.assertEqual(first["district"], district)
+                self.assertEqual(first["min_temp"], 18.0)
+                self.assertEqual(first["max_temp"], 30.0)
+                self.assertTrue(np.isfinite(first["rainfall"]))
+                self.assertEqual(first["humidity"], 70.0)
+                self.assertEqual(first, second)
+
+    def test_weather_retries_temporary_http_503_and_does_not_cache_failures(self):
+        for district in ("Belagavi", "Tumakuru"):
+            with self.subTest(district=district):
+                with patch("app.requests.get", side_effect=[WeatherResponse(status_code=503), WeatherResponse()]) as get, \
+                     patch("app.time.sleep"):
+                    weather = app.get_weather(district)
+                self.assertEqual(get.call_count, 2)
+                self.assertEqual(weather["district"], district)
+
+    def test_weather_retries_are_bounded_after_connection_failures(self):
+        with patch("app.requests.get", side_effect=requests.ConnectionError("offline")) as get, \
+             patch("app.time.sleep"):
+            with self.assertRaises(requests.ConnectionError):
+                app.get_weather("Kolar")
+        self.assertEqual(get.call_count, 3)
+        self.assertNotIn("Kolar", app._weather_cache)
+
+    def test_weather_rejects_invalid_values_before_display(self):
+        cases = (
+            ({"temperature_2m_min": [31.0] * 9}, "minimum temperature"),
+            ({"rain_sum": [-1.0] * 9}, "outside its valid range"),
+            ({"temperature_2m_min": [float("nan")] * 9}, "missing number"),
+        )
+        for index, (overrides, message) in enumerate(cases):
+            district = ("Hassan", "Raichur", "Udupi")[index]
+            with self.subTest(district=district), patch(
+                "app.requests.get", return_value=WeatherResponse(open_meteo_payload(overrides))
+            ):
+                with self.assertRaisesRegex(ValueError, message):
+                    app.get_weather(district)
+                self.assertNotIn(district, app._weather_cache)
+
+    def test_missing_humidity_is_not_returned_as_partial_weather(self):
+        response = WeatherResponse(open_meteo_payload(hourly_overrides={"relative_humidity_2m": []}))
+        with patch("app.requests.get", return_value=response):
+            with self.assertRaisesRegex(ValueError, "3 PM humidity forecast is unavailable"):
+                app.get_weather("Koppal")
+        self.assertNotIn("Koppal", app._weather_cache)
+
+    def test_concurrent_same_district_reads_share_one_api_request(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with patch("app.requests.get", return_value=WeatherResponse()) as get:
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                results = list(executor.map(app.get_weather, ["Mysuru"] * 6))
+        self.assertEqual(get.call_count, 1)
+        self.assertTrue(all(result["district"] == "Mysuru" for result in results))
+
+    def test_incomplete_or_outdated_history_is_not_saved_as_a_prediction(self):
+        weather = weather_for("Mysuru")
+        weather["karnataka_history_features"] = None
+        weather["karnataka_history_error"] = "Open-Meteo did not return valid rainfall for all seven prior days"
+        with patch("app.get_weather", return_value=weather):
+            response = self.post_form("/", {"district": "Mysuru"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"recent rainfall history is missing or invalid", response.data)
+        self.assertEqual(self.count_records(), 0)
 
     @patch("app.get_weather")
     def test_invalid_district_is_not_saved(self, get_weather):
@@ -111,28 +493,26 @@ class AgriRainAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Weather forecast is temporarily unavailable", response.data)
 
-    @patch("app.load_model", return_value=({"pipeline": FakePipeline(), "features": app.FEATURES}, None))
+    @patch("app.load_model", return_value=(fake_bundle(), None))
     @patch("app.get_weather", side_effect=requests.Timeout)
-    def test_manual_observations_allow_prediction_when_forecast_is_down(self, _weather, _model):
+    def test_manual_weather_values_do_not_replace_missing_history(self, _weather, _model):
         response = self.post_form("/", {
             "district": "Mysuru", "observed_min_temp": "19.0",
             "observed_max_temp": "29.0", "observed_rainfall": "2.5",
             "observed_humidity": "72",
         })
-        self.assertEqual(response.status_code, 302)
-        page = self.client.get(response.location, follow_redirects=True)
-        self.assertIn(b"Rain likely", page.data)
-        self.assertIn(b"user-entered observations", page.data)
-        self.assertEqual(self.count_records(), 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"seven complete prior rainfall days are required", response.data)
+        self.assertEqual(self.count_records(), 0)
 
-    @patch("app.load_model", return_value=({"pipeline": FakePipeline(), "features": app.FEATURES}, None))
+    @patch("app.load_model", return_value=(fake_bundle(), None))
     @patch("app.get_weather", side_effect=requests.Timeout)
     def test_missing_manual_observation_does_not_predict(self, _weather, _model):
         response = self.post_form("/", {
             "district": "Mysuru", "observed_min_temp": "19.0",
         })
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"all four valid weather values", response.data)
+        self.assertIn(b"seven complete prior rainfall days are required", response.data)
         self.assertEqual(self.count_records(), 0)
 
     def test_history_clear_requires_confirmation(self):

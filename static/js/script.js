@@ -1,4 +1,122 @@
 document.addEventListener('DOMContentLoaded', () => {
+  // Start the forecast icon animations only after the page has been painted.
+  document.querySelectorAll('[data-weather-icon]').forEach((icon) => {
+    const supported = new Set(['sunny', 'partly-cloudy', 'cloudy', 'rainy', 'thunderstorm', 'snowy', 'unknown']);
+    if (!supported.has(icon.dataset.condition)) return;
+    window.requestAnimationFrame(() => icon.classList.add('is-ready'));
+  });
+
+  const districtSelect = document.getElementById('district');
+  const districtFilter = document.getElementById('district-filter');
+  const weatherForm = document.getElementById('prediction-form');
+  const refreshDistrict = document.querySelector('[data-refresh-district]');
+  const districtSuggestionList = document.getElementById('district-suggestions');
+  const districtNoResults = document.querySelector('[data-district-no-results]');
+  const openSuggestionsButton = document.querySelector('[data-open-district-suggestions]');
+  if (districtSelect && weatherForm) {
+    let navigationTimer = null;
+    let navigationStarted = false;
+    let activeSuggestion = -1;
+    const districtSearchControl = districtFilter?.closest('.district-search-control');
+    const districtOptions = [...districtSelect.options];
+    const openDistrict = () => {
+      if (navigationStarted) return;
+      navigationStarted = true;
+      const loading = document.querySelector('[data-loading]');
+      if (loading) loading.hidden = false;
+      if (districtSelect.value) {
+        window.location.assign(`${weatherForm.action}?district=${encodeURIComponent(districtSelect.value)}`);
+      }
+    };
+    const closeDistrictSuggestions = () => {
+      if (!districtSuggestionList || !districtFilter) return;
+      districtSuggestionList.hidden = true;
+      districtFilter.setAttribute('aria-expanded', 'false');
+      districtFilter.removeAttribute('aria-activedescendant');
+      activeSuggestion = -1;
+    };
+    const renderDistrictSuggestions = (showAll = false) => {
+      if (!districtFilter || !districtSuggestionList) return;
+      const query = districtFilter.value.trim().toLocaleLowerCase();
+      const matches = districtOptions.filter((option) =>
+        showAll || `${option.textContent} ${option.value}`.toLocaleLowerCase().includes(query),
+      );
+      districtSuggestionList.replaceChildren();
+      matches.forEach((option, index) => {
+        const item = document.createElement('li');
+        item.id = `district-option-${index}`;
+        item.className = 'district-suggestion';
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', String(option.value === districtSelect.value));
+        item.dataset.districtValue = option.value;
+        item.textContent = option.textContent.trim();
+        item.addEventListener('pointerdown', (event) => event.preventDefault());
+        item.addEventListener('click', () => {
+          districtSelect.value = option.value;
+          districtFilter.value = option.textContent.trim();
+          closeDistrictSuggestions();
+          districtSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        districtSuggestionList.append(item);
+      });
+      districtSuggestionList.hidden = false;
+      districtFilter.setAttribute('aria-expanded', 'true');
+      if (districtNoResults) districtNoResults.hidden = matches.length > 0;
+    };
+    const setActiveSuggestion = (nextIndex) => {
+      if (!districtSuggestionList) return;
+      const options = [...districtSuggestionList.querySelectorAll('[role="option"]')];
+      if (!options.length) return;
+      activeSuggestion = (nextIndex + options.length) % options.length;
+      options.forEach((option, index) => option.classList.toggle('is-active', index === activeSuggestion));
+      districtFilter?.setAttribute('aria-activedescendant', options[activeSuggestion].id);
+      options[activeSuggestion].scrollIntoView?.({ block: 'nearest' });
+    };
+    if (districtFilter && districtSuggestionList) {
+      districtFilter.addEventListener('focus', renderDistrictSuggestions);
+      districtFilter.addEventListener('input', () => {
+        activeSuggestion = -1;
+        renderDistrictSuggestions();
+      });
+      districtFilter.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          if (districtSuggestionList.hidden) renderDistrictSuggestions();
+          setActiveSuggestion(activeSuggestion + 1);
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (districtSuggestionList.hidden) renderDistrictSuggestions();
+          setActiveSuggestion(activeSuggestion < 0 ? districtSuggestionList.children.length - 1 : activeSuggestion - 1);
+        } else if (event.key === 'Enter') {
+          const options = [...districtSuggestionList.querySelectorAll('[role="option"]')];
+          if (!options.length) {
+            event.preventDefault();
+            if (districtNoResults) districtNoResults.hidden = false;
+            return;
+          }
+          event.preventDefault();
+          options[activeSuggestion < 0 ? 0 : activeSuggestion].click();
+        } else if (event.key === 'Escape') {
+          closeDistrictSuggestions();
+        }
+      });
+      openSuggestionsButton?.addEventListener('click', () => {
+        districtFilter.focus();
+        renderDistrictSuggestions(true);
+      });
+      districtSuggestionList.addEventListener('pointerdown', (event) => event.preventDefault());
+      document.addEventListener('pointerdown', (event) => {
+        if (districtSearchControl && !districtSearchControl.contains(event.target)) closeDistrictSuggestions();
+      });
+    }
+    districtSelect.addEventListener('change', () => {
+      if (navigationStarted) return;
+      window.clearTimeout(navigationTimer);
+      navigationTimer = window.setTimeout(openDistrict, 180);
+    });
+    if (refreshDistrict) refreshDistrict.addEventListener('click', openDistrict);
+  }
+
   document.querySelectorAll('[data-language-form] select').forEach((select) => {
     select.addEventListener('change', () => select.form.requestSubmit());
   });

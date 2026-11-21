@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% block title %}{{ _('Home | AgriRain') }}{% endblock %}
+{% block content %}
+<section class="workspace-page home-landing-page">
+  <section class="home-welcome-card">
+    <div class="home-welcome-copy">
+      <p class="eyebrow">{{ _('KARNATAKA · AGRICULTURE WEATHER') }}</p>
+      <h1>{{ _('Grow with a clearer view.') }}</h1>
+      <p>{{ _('Welcome to AgriRain. Explore local weather, review rainfall outlooks, and keep your farm decisions informed.') }}</p>
+      <a class="workspace-primary-link" href="{{ url_for('home') }}">{{ _('Open Dashboard') }} <span aria-hidden="true">→</span></a>
+    </div>
+    <div class="home-welcome-mark" aria-hidden="true">✳</div>
+  </section>
+  <section class="home-shortcuts" aria-label="{{ _('AgriRain shortcuts') }}">
+    <a href="{{ url_for('home', section='forecast') }}#forecast"><span aria-hidden="true">☁</span><strong>{{ _('District Weather') }}</strong><small>{{ _('Browse local conditions across Karnataka.') }}</small></a>
+    <a href="{{ url_for('home', section='prediction') }}#prediction"><span aria-hidden="true">◉</span><strong>{{ _('Rainfall Prediction') }}</strong><small>{{ _('View the rainfall outlook for your district.') }}</small></a>
+    <a href="{{ url_for('history') }}"><span aria-hidden="true">▤</span><strong>{{ _('History') }}</strong><small>{{ _('Return to your saved predictions.') }}</small></a>
+  </section>
+</section>
+{% endblock %}

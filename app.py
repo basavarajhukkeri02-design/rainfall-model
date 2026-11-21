@@ -1,7 +1,8 @@
 """AgriRain Flask application. Run with `python app.py` for local development."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
+from copy import deepcopy
 from functools import wraps
 from collections import defaultdict, deque
 import html
@@ -13,6 +14,7 @@ import re
 import threading
 import time
 import webbrowser
+from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 
 import joblib
@@ -26,11 +28,15 @@ from translations import LANGUAGES, translate
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = Path(os.environ.get("AGRIRAIN_DATABASE", BASE_DIR / "prediction_history.db"))
-MODEL_PATH = BASE_DIR / "rainfall_model.pkl"
+MODEL_PATH = BASE_DIR / "karnataka_model" / "rainfall_model.pkl"
 OPEN_METEO_URL = os.environ.get(
     "OPEN_METEO_API_URL", "https://api.open-meteo.com/v1/forecast"
 )
-FEATURES = ["MinTemp", "MaxTemp", "Rainfall", "Humidity3pm"]
+KARNATAKA_HISTORY_FEATURES = [
+    "Rainfall_Lag_1", "Rainfall_Lag_2", "Rainfall_Lag_3", "Rainfall_Lag_7",
+    "Rolling_Mean_3", "Rolling_Sum_7", "Month", "Day_Of_Year", "District",
+]
+FEATURES = KARNATAKA_HISTORY_FEATURES
 TRANSLATION_URL = "https://translation.googleapis.com/language/translate/v2"
 TRANSLATION_MAX_CHARS = 1000
 TRANSLATION_RATE_LIMIT = 10
@@ -41,12 +47,48 @@ TRANSLATION_LANGUAGES = {
     "gu": "ગુજરાતી", "pa": "ਪੰਜਾਬੀ", "ur": "اردو",
 }
 DISTRICTS = {
-    "Bengaluru": (12.9716, 77.5946), "Belagavi": (15.8497, 74.4977),
-    "Dharwad": (15.4589, 75.0078), "Vijayapura": (16.8302, 75.7100),
-    "Kalaburagi": (17.3297, 76.8343), "Mysuru": (12.2958, 76.6394),
-    "Shivamogga": (13.9299, 75.5681), "Ballari": (15.1394, 76.9214),
-    "Mangaluru": (12.9141, 74.8560), "Tumakuru": (13.3379, 77.1173),
+    # Keys match the district labels used by the Karnataka training dataset.
+    # Coordinates point to representative district headquarters/towns.
+    "Bagalkot": (16.1725, 75.6557),
+    "Ballari": (15.1394, 76.9214),
+    "Belagavi": (15.8497, 74.4977),
+    "Bengaluru Rural": (13.2847, 77.6078),
+    "Bengaluru Urban": (12.9700, 77.6536),
+    "Bidar": (17.9149, 77.5046),
+    "Chamrajnagar": (12.0526, 77.2865),
+    "Chikkaballapura": (13.4324, 77.7280),
+    "Chikkamagaluru": (13.3153, 75.7754),
+    "Chitradurga": (14.2306, 76.3985),
+    "Dakshina Kannada": (12.9141, 74.8560),
+    "Davangere": (14.4663, 75.9238),
+    "Dharwad": (15.4589, 75.0078),
+    "Gadag": (15.4325, 75.6380),
+    "Hassan": (13.0097, 76.1029),
+    "Haveri": (14.6610, 75.4345),
+    "Kalaburagi": (17.3297, 76.8343),
+    "Kodagu": (12.4240, 75.8070),
+    "Kolar": (13.1357, 78.1326),
+    "Koppal": (15.3465, 76.1670),
+    "Mandya": (12.5222, 76.9009),
+    "Mysuru": (12.2958, 76.6394),
+    "Raichur": (16.2120, 77.3439),
+    "Ramanagara": (12.7094, 77.2807),
+    "Shivamogga": (13.9299, 75.5681),
+    "Tumakuru": (13.3390, 77.1140),
+    "Udupi": (13.3408, 74.7421),
+    "Uttara Kannada": (14.8185, 74.1416),
+    "Vijayanagara": (15.2689, 76.3909),
+    "Vijayapura": (16.8302, 75.7100),
+    "Yadgir": (16.7604, 77.1428),
 }
+DISTRICT_LABELS = {
+    "Chamrajnagar": "Chamarajanagar",
+    "Davangere": "Davanagere",
+}
+WEATHER_CACHE_TTL_SECONDS = 20
+_weather_cache = {}
+_weather_cache_lock = threading.Lock()
+_weather_district_locks = {district: threading.Lock() for district in DISTRICTS}
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -174,46 +216,113 @@ def init_db():
 
 
 def load_model():
-    """Load only the model bundle produced by this project's training script."""
+    """Load and validate the Karnataka model used for district predictions."""
     if not MODEL_PATH.is_file():
-        return None, "The trained model is missing. Run `python train_model.py` first."
+        return None, "The Karnataka rainfall model is missing."
     try:
         bundle = joblib.load(MODEL_PATH)
         if not isinstance(bundle, dict) or bundle.get("features") != FEATURES:
             raise ValueError("Model bundle has an unexpected feature order.")
         pipeline = bundle.get("pipeline")
-        if not hasattr(pipeline, "predict"):
+        threshold = bundle.get("threshold")
+        if not isinstance(threshold, (int, float)) or not np.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError("Model bundle has an invalid classification threshold.")
+        if bundle.get("positive_label") != 1:
+            raise ValueError("Model bundle has an unexpected positive label.")
+        if not hasattr(pipeline, "predict_proba"):
             raise ValueError("Model bundle does not contain a usable pipeline.")
+        pipeline_features = getattr(pipeline, "feature_names_in_", None)
+        if pipeline_features is not None and list(pipeline_features) != FEATURES:
+            raise ValueError("Model pipeline has an unexpected feature order.")
         return bundle, None
     except Exception:
-        app.logger.exception("Could not load the rainfall model")
-        return None, "The trained model could not be loaded. Retrain it with `python train_model.py`."
+        app.logger.exception("Could not load the Karnataka rainfall model")
+        return None, "The Karnataka rainfall model could not be loaded."
 
 
 def get_weather(district):
-    """Return today's Open-Meteo forecast; missing or invalid values are errors."""
+    """Return a short-lived district forecast, coalescing duplicate requests."""
+    if district not in DISTRICTS:
+        raise KeyError(f"Unknown Karnataka district: {district}")
+
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    with _weather_cache_lock:
+        district_lock = _weather_district_locks[district]
+        cached = _weather_cache.get(district)
+        if cached and time.monotonic() - cached["stored_at"] < WEATHER_CACHE_TTL_SECONDS:
+            if cached["weather"].get("forecast_date") == today:
+                return deepcopy(cached["weather"])
+
+    # Concurrent requests for the same district share one upstream request.
+    with district_lock:
+        with _weather_cache_lock:
+            cached = _weather_cache.get(district)
+            if cached and time.monotonic() - cached["stored_at"] < WEATHER_CACHE_TTL_SECONDS:
+                if cached["weather"].get("forecast_date") == today:
+                    return deepcopy(cached["weather"])
+
+        weather = _fetch_weather(district)
+        with _weather_cache_lock:
+            _weather_cache[district] = {
+                "stored_at": time.monotonic(),
+                "weather": deepcopy(weather),
+            }
+        return weather
+
+
+def _fetch_weather(district):
+    """Fetch and validate one complete Open-Meteo forecast response."""
     latitude, longitude = DISTRICTS[district]
-    response = requests.get(
-        OPEN_METEO_URL,
-        params={
-            "latitude": latitude, "longitude": longitude,
-            "daily": "temperature_2m_min,temperature_2m_max,rain_sum",
-            "hourly": "relative_humidity_2m", "forecast_days": 1,
-            "timezone": "Asia/Kolkata",
-        },
-        timeout=(4, 12),
-    )
+    params = {
+        "latitude": latitude, "longitude": longitude,
+        "daily": "temperature_2m_min,temperature_2m_max,rain_sum,weather_code",
+        "hourly": "temperature_2m,relative_humidity_2m", "past_days": 7, "forecast_days": 7,
+        "timezone": "Asia/Kolkata",
+    }
+    response = None
+    for attempt in range(3):
+        try:
+            response = requests.get(OPEN_METEO_URL, params=params, timeout=(4, 12))
+            response.raise_for_status()
+            break
+        except requests.HTTPError as error:
+            status = response.status_code if response is not None else None
+            if (status != 429 and (status is None or status < 500)) or attempt == 2:
+                raise
+            app.logger.warning(
+                "Open-Meteo transient HTTP %s for %s; retry %s/2",
+                status, district, attempt + 1,
+            )
+        except (
+            requests.Timeout,
+            requests.ConnectionError,
+            requests.exceptions.ChunkedEncodingError,
+        ):
+            if attempt == 2:
+                raise
+            app.logger.warning(
+                "Open-Meteo network failure for %s; retry %s/2",
+                district, attempt + 1,
+            )
+        time.sleep(0.2 * (2 ** attempt))
+
     app.logger.info("Open-Meteo response status=%s district=%s", response.status_code, district)
-    response.raise_for_status()
     payload = response.json()
     try:
         daily, hourly = payload["daily"], payload["hourly"]
-        forecast_date = daily["time"][0]
+        daily_dates = daily["time"]
+        if not isinstance(daily_dates, list) or not all(isinstance(day, str) for day in daily_dates):
+            raise ValueError("Open-Meteo response contains invalid daily dates")
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        forecast_date = today if today in daily_dates else None
+        if forecast_date is None:
+            raise ValueError("Today's forecast date is missing")
+        forecast_index = daily_dates.index(forecast_date)
         humidity_times = hourly["time"]
         humidity_values = hourly["relative_humidity_2m"]
-        min_temp = daily["temperature_2m_min"][0]
-        max_temp = daily["temperature_2m_max"][0]
-        rainfall = daily["rain_sum"][0]
+        min_temp = daily["temperature_2m_min"][forecast_index]
+        max_temp = daily["temperature_2m_max"][forecast_index]
+        rainfall = daily["rain_sum"][forecast_index]
     except (KeyError, IndexError, TypeError) as error:
         raise ValueError("Open-Meteo response is missing required forecast fields") from error
     target_hour = f"{forecast_date}T15:00"
@@ -222,8 +331,34 @@ def get_weather(district):
         humidity_3pm = humidity_values[humidity_index]
     except (ValueError, IndexError, TypeError) as error:
         raise ValueError("3 PM humidity forecast is unavailable") from error
+    current_hour = datetime.now(ZoneInfo("Asia/Kolkata")).replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:00")
+    current_temp = None
+    try:
+        temperature_values = hourly.get("temperature_2m", [])
+        current_temp = float(temperature_values[humidity_times.index(current_hour)])
+        if not np.isfinite(current_temp):
+            current_temp = None
+    except (ValueError, IndexError, TypeError):
+        pass
+    weather_code = None
+    try:
+        raw_weather_code = daily.get("weather_code", [])[forecast_index]
+        if raw_weather_code is not None:
+            weather_code = int(raw_weather_code)
+    except (IndexError, TypeError, ValueError):
+        pass
+    local_hour = datetime.now(ZoneInfo("Asia/Kolkata")).hour
+    weather_condition, weather_condition_label = weather_condition_for_code(
+        weather_code, is_night=local_hour < 6 or local_hour >= 18
+    )
     result = {
+        "district": district,
         "forecast_date": forecast_date,
+        "prediction_date": (datetime.strptime(forecast_date, "%Y-%m-%d").date() + timedelta(days=1)).isoformat(),
+        "weather_code": weather_code,
+        "weather_condition": weather_condition,
+        "weather_condition_label": weather_condition_label,
+        "current_temp": current_temp,
         "min_temp": min_temp,
         "max_temp": max_temp,
         "rainfall": rainfall,
@@ -233,28 +368,135 @@ def get_weather(district):
         result[key] = float(result[key])
         if not np.isfinite(result[key]):
             raise ValueError("Forecast contains a missing number")
+    if result["min_temp"] > result["max_temp"]:
+        raise ValueError("Forecast minimum temperature exceeds its maximum")
+    if result["rainfall"] < 0 or not 0 <= result["humidity"] <= 100:
+        raise ValueError("Forecast rainfall or humidity is outside its valid range")
+    history_features, history_error = build_karnataka_history_features(
+        daily_dates, daily.get("rain_sum"), forecast_date, district
+    )
+    result["karnataka_history_features"] = history_features
+    result["karnataka_history_error"] = history_error
+    forecasts = []
+    daily_min = daily.get("temperature_2m_min", [])
+    daily_max = daily.get("temperature_2m_max", [])
+    daily_rain = daily.get("rain_sum", [])
+    daily_codes = daily.get("weather_code", [])
+    for index in range(forecast_index, min(forecast_index + 7, len(daily_dates))):
+        try:
+            low, high, rain = float(daily_min[index]), float(daily_max[index]), float(daily_rain[index])
+            if not all(np.isfinite(value) for value in (low, high, rain)) or low > high or rain < 0:
+                continue
+            code = int(daily_codes[index]) if daily_codes[index] is not None else None
+            condition, label = weather_condition_for_code(code)
+        except (IndexError, TypeError, ValueError):
+            continue
+        forecasts.append({
+            "date": daily_dates[index], "min_temp": low, "max_temp": high,
+            "rainfall": rain, "weather_code": code,
+            "weather_condition": condition, "weather_condition_label": label,
+        })
+    result["forecast_days"] = forecasts
     return result
 
 
-def prediction_for(bundle, weather):
+def weather_condition_for_code(weather_code, is_night=False):
+    """Map Open-Meteo WMO codes to lightweight weather-icon states."""
+    if weather_code == 0:
+        if is_night:
+            return "clear-night", "Clear night"
+        return "sunny", "Sunny"
+    if weather_code in {1, 2}:
+        return "partly-cloudy", "Partly cloudy"
+    if weather_code == 3:
+        return "cloudy", "Cloudy"
+    if weather_code in {45, 48}:
+        return "cloudy", "Fog"
+    if weather_code in {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}:
+        return "rainy", "Rain"
+    if weather_code in {71, 73, 75, 77, 85, 86}:
+        return "snowy", "Snow"
+    if weather_code in {95, 96, 99}:
+        return "thunderstorm", "Thunderstorm"
+    return "unknown", "Weather condition unavailable"
+
+
+def build_karnataka_history_features(daily_dates, daily_rainfall, feature_date, district):
+    """Build training-ordered lag inputs only when all seven prior days are valid."""
+    if (
+        not isinstance(daily_dates, list)
+        or not all(isinstance(day, str) for day in daily_dates)
+        or not isinstance(daily_rainfall, list)
+    ):
+        return None, "Daily rainfall history is missing"
+    if len(daily_dates) != len(daily_rainfall) or len(set(daily_dates)) != len(daily_dates):
+        return None, "Daily rainfall history has inconsistent dates or values"
+    rainfall_by_date = {}
+    for day, value in zip(daily_dates, daily_rainfall):
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(amount) and amount >= 0:
+            rainfall_by_date[day] = amount
+
+    try:
+        base_date = datetime.strptime(feature_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None, "Forecast date is invalid"
+
+    prior_dates = [(base_date - timedelta(days=offset)).isoformat() for offset in range(1, 8)]
+    if any(day not in rainfall_by_date for day in prior_dates):
+        return None, "Open-Meteo did not return valid rainfall for all seven prior days"
+
+    # First element is the previous day, matching pandas shift(1) in training.
+    prior_rainfall = [rainfall_by_date[day] for day in prior_dates]
     feature_values = {
-        "MinTemp": weather.get("min_temp"),
-        "MaxTemp": weather.get("max_temp"),
-        "Rainfall": weather.get("rainfall"),
-        "Humidity3pm": weather.get("humidity"),
+        "Rainfall_Lag_1": prior_rainfall[0],
+        "Rainfall_Lag_2": prior_rainfall[1],
+        "Rainfall_Lag_3": prior_rainfall[2],
+        "Rainfall_Lag_7": prior_rainfall[6],
+        "Rolling_Mean_3": float(np.mean(prior_rainfall[:3])),
+        "Rolling_Sum_7": float(np.sum(prior_rainfall)),
+        "Month": base_date.month,
+        "Day_Of_Year": base_date.timetuple().tm_yday,
+        "District": district,
     }
-    if any(value is None for value in feature_values.values()):
-        raise ValueError("All four weather features are required for prediction")
-    row = pd.DataFrame([[feature_values[name] for name in FEATURES]], columns=FEATURES)
+    # Dict insertion order follows the model training feature order.
+    return {name: feature_values[name] for name in KARNATAKA_HISTORY_FEATURES}, None
+
+
+def prediction_for(bundle, weather):
+    feature_values = weather.get("karnataka_history_features")
+    if not isinstance(feature_values, dict):
+        detail = weather.get("karnataka_history_error") or "Seven-day district rainfall history is unavailable"
+        raise ValueError(detail)
+    feature_order = bundle.get("features")
+    if feature_order != FEATURES or list(feature_values) != feature_order:
+        raise ValueError("Prediction features do not match the Karnataka model bundle")
+    if feature_values.get("District") not in DISTRICTS:
+        raise ValueError("Prediction contains an unknown district")
+    if feature_values["District"] != weather.get("district"):
+        raise ValueError("Rainfall history district does not match the selected district")
+    numeric_features = [name for name in feature_order if name != "District"]
+    try:
+        for name in numeric_features:
+            feature_values[name] = float(feature_values[name])
+            if not np.isfinite(feature_values[name]):
+                raise ValueError(f"Prediction feature {name} is missing or invalid")
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Seven-day district rainfall features are incomplete or invalid") from error
+    row = pd.DataFrame([[feature_values[name] for name in feature_order]], columns=feature_order)
     pipeline = bundle["pipeline"]
-    label = int(pipeline.predict(row)[0])
     classes = list(getattr(pipeline, "classes_", []))
-    probability = None
-    if hasattr(pipeline, "predict_proba") and 1 in classes:
-        candidate = float(pipeline.predict_proba(row)[0][classes.index(1)])
-        if np.isfinite(candidate) and 0 <= candidate <= 1:
-            probability = candidate
-    return ("Rain likely" if label == 1 else "Rain less likely"), probability
+    positive_label = bundle["positive_label"]
+    if positive_label not in classes:
+        raise ValueError("The model does not expose its configured positive class")
+    probability = float(pipeline.predict_proba(row)[0][classes.index(positive_label)])
+    if not np.isfinite(probability) or not 0 <= probability <= 1:
+        raise ValueError("The model returned an invalid probability")
+    label = int(probability >= float(bundle["threshold"]))
+    return ("Rain likely" if label == positive_label else "Rain less likely"), probability
 
 
 def read_manual_weather(form):
@@ -441,11 +683,11 @@ def set_language():
 @app.route("/", methods=["GET", "POST"])
 @login_required
 def home():
-    selected = request.form.get("district", "Bengaluru") if request.method == "POST" else request.args.get("district", "Bengaluru")
+    selected = request.form.get("district", "Bengaluru Urban") if request.method == "POST" else request.args.get("district", "Bengaluru Urban")
     invalid_district = selected not in DISTRICTS
     if invalid_district:
         flash("Please select a valid Karnataka district.", "error")
-        selected = "Bengaluru"
+        selected = "Bengaluru Urban"
 
     weather = None
     model_bundle, model_error = load_model()
@@ -463,15 +705,11 @@ def home():
             flash("Choose a district before requesting a prediction.", "error")
         elif model_bundle is None:
             flash(model_error, "error")
+        elif weather is None:
+            flash("A current forecast and seven complete prior rainfall days are required for prediction.", "error")
         else:
             try:
-                manual_fields = (
-                    "observed_min_temp", "observed_max_temp",
-                    "observed_rainfall", "observed_humidity",
-                )
-                has_manual_values = any(request.form.get(name, "").strip() for name in manual_fields)
-                model_weather = read_manual_weather(request.form) if has_manual_values or weather is None else weather
-                prediction, probability = prediction_for(model_bundle, model_weather)
+                prediction, probability = prediction_for(model_bundle, weather)
                 with database_connection() as connection:
                     connection.execute("""
                         INSERT INTO prediction_history
@@ -479,33 +717,40 @@ def home():
                          temperature_max, expected_rainfall, humidity, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        session["user_id"], selected, prediction, probability, model_weather["min_temp"],
-                        model_weather["max_temp"], model_weather["rainfall"], model_weather["humidity"],
+                        session["user_id"], selected, prediction, probability, weather["min_temp"],
+                        weather["max_temp"], weather["rainfall"], weather["humidity"],
                         datetime.now().astimezone().isoformat(timespec="seconds"),
                     ))
                 session["prediction_result"] = {
                     "district": selected, "prediction": prediction,
                     "probability": probability,
-                    "input_source": (
-                        "user-entered observations" if weather is None
-                        else "forecast or edited weather values" if has_manual_values
-                        else "live forecast"
-                    ),
-                    "weather": model_weather,
+                    "input_source": "Open-Meteo rainfall history for the previous seven days",
+                    "prediction_date": weather["prediction_date"],
+                    "weather": weather,
                 }
                 return redirect(url_for("home", district=selected))
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 app.logger.exception("Prediction could not be completed")
-                flash(
-                    "Prediction needs a loaded model and all four valid weather values. Review the values and try again.",
-                    "error",
-                )
+                flash("Prediction is unavailable because complete recent rainfall history is missing or invalid.", "error")
 
     return render_template(
-        "index.html", districts=DISTRICTS, district=selected, weather=weather,
+        "index.html", districts=DISTRICTS, district_labels=DISTRICT_LABELS,
+        district=selected, weather=weather,
         prediction_result=prediction_result, history=recent_predictions(session["user_id"]),
         model_error=model_error, profile=profile_summary(session["user_id"]),
     )
+
+
+@app.route("/home")
+@login_required
+def home_landing():
+    return render_template("home.html")
+
+
+@app.route("/settings")
+@login_required
+def settings():
+    return render_template("settings.html")
 
 
 @app.route("/history")

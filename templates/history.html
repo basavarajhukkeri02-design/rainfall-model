@@ -1,13 +1,76 @@
 {% extends 'base.html' %}
 {% block title %}{{ _('Prediction history | AgriRain') }}{% endblock %}
 {% block content %}
-<section class="page-hero"><div class="wrap"><p class="eyebrow">{{ _('YOUR SAVED RECORDS') }}</p><h1>{{ _('Prediction history') }}</h1><p>{{ total }} {{ _('Saved predictions. Newest records appear first.') }}</p></div></section>
-<section class="wrap history-page panel">
-  {% if records %}<div class="table-wrap"><table><thead><tr><th>{{ _('District') }}</th><th>{{ _('Model result') }}</th><th>{{ _('Probability estimate') }}</th><th>{{ _('Min / max') }}</th><th>{{ _('Expected rain') }}</th><th>{{ _('Humidity') }}</th><th>{{ _('Saved at') }}</th></tr></thead><tbody>
-  {% for item in records %}<tr><td>{{ _(item['district']) }}</td><td><span class="badge">{{ _(item['prediction']) }}</span></td><td>{{ ('%.1f'|format(item['rainfall_probability'] * 100)) ~ '%' if item['rainfall_probability'] is not none else '?' }}</td><td>{{ '%.1f'|format(item['temperature_min']) if item['temperature_min'] is not none else '?' }} / {{ '%.1f'|format(item['temperature_max']) if item['temperature_max'] is not none else '?' }} ?C</td><td>{{ '%.1f'|format(item['expected_rainfall']) if item['expected_rainfall'] is not none else '?' }} mm</td><td>{{ '%.0f'|format(item['humidity']) if item['humidity'] is not none else '?' }}%</td><td>{{ item['created_at'] }}</td></tr>{% endfor %}
-  </tbody></table></div>
-  <div class="pagination">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('history', page=page - 1) }}">? {{ _('Newer') }}</a>{% else %}<span></span>{% endif %}<span>{{ _('Page') }} {{ page }} {{ _('of') }} {{ pages }}</span>{% if page < pages %}<a class="button button-secondary" href="{{ url_for('history', page=page + 1) }}">{{ _('Older') }} ?</a>{% endif %}</div>
-  <form class="clear-form" method="post" action="{{ url_for('clear_history') }}" data-confirm="{{ _('Delete all saved predictions? This cannot be undone.') }}"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="confirm" value="yes"><button class="button button-danger" type="submit">{{ _('Clear history') }}</button></form>
-  {% else %}<div class="empty-state"><span aria-hidden="true">?</span><h2>{{ _('No saved predictions yet') }}</h2><p>{{ _('Once you request a prediction, it will appear here for later reference.') }}</p><a class="button" href="{{ url_for('home') }}">{{ _('Go to forecast') }}</a></div>{% endif %}
+<section class="history-page wrap">
+  <header class="history-heading">
+    <div>
+      <p class="eyebrow">{{ _('YOUR SAVED RECORDS') }}</p>
+      <h1>{{ _('Prediction history') }}</h1>
+      <p>{{ total }} {{ _('Saved predictions. Newest records appear first.') }}</p>
+    </div>
+    <span class="history-count"><strong>{{ total }}</strong><span>{{ _('records') }}</span></span>
+  </header>
+
+  {% if records %}
+    <div class="history-record-list">
+      {% for item in records %}
+        {% set date_parts = item['created_at'][:10].split('-') %}
+        {% set saved_year = date_parts[0]|int %}
+        {% set saved_month = date_parts[1]|int %}
+        {% set saved_day = date_parts[2]|int %}
+        {% set leap_year = saved_year % 4 == 0 and (saved_year % 100 != 0 or saved_year % 400 == 0) %}
+        {% set month_lengths = [31, 29 if leap_year else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] %}
+        {% if saved_day < month_lengths[saved_month - 1] %}
+          {% set target_date = '%04d-%02d-%02d'|format(saved_year, saved_month, saved_day + 1) %}
+        {% elif saved_month < 12 %}
+          {% set target_date = '%04d-%02d-01'|format(saved_year, saved_month + 1) %}
+        {% else %}
+          {% set target_date = '%04d-01-01'|format(saved_year + 1) %}
+        {% endif %}
+        {% set probability = (item['rainfall_probability'] * 100)|round(1) if item['rainfall_probability'] is not none else none %}
+        <article class="history-record">
+          <header class="history-record-head">
+            <div class="history-record-place">
+              <span class="history-record-kicker">{{ _('DISTRICT') }}</span>
+              <h2>{{ _(item['district']) }}</h2>
+            </div>
+            {% if item['prediction'] == 'Rain likely' %}
+              <span class="history-result history-result--likely"><span aria-hidden="true">●</span>{{ _('Rain likely') }}</span>
+            {% else %}
+              <span class="history-result history-result--less"><span aria-hidden="true">●</span>{{ _('Rain less likely') }}</span>
+            {% endif %}
+          </header>
+          <dl class="history-details">
+            <div class="history-probability">
+              <dt>{{ _('Prediction probability') }}</dt>
+              <dd>{% if probability is not none %}{{ '%.1f'|format(probability) }}%{% else %}—{% endif %}</dd>
+              {% if probability is not none %}<span class="history-probability-track" aria-hidden="true"><span style="width: {{ [[probability, 0]|max, 100]|min }}%"></span></span>{% endif %}
+            </div>
+            <div><dt>{{ _('Forecast date') }}</dt><dd><time datetime="{{ item['created_at'][:10] }}">{{ item['created_at'][:10] }}</time></dd></div>
+            <div><dt>{{ _('Prediction target date') }}</dt><dd><time datetime="{{ target_date }}">{{ target_date }}</time></dd></div>
+            <div class="history-saved-detail"><dt>{{ _('Saved date and time') }}</dt><dd><time datetime="{{ item['created_at'] }}">{{ item['created_at']|replace('T', ' ') }}</time></dd></div>
+          </dl>
+        </article>
+      {% endfor %}
+    </div>
+
+    <div class="history-pagination">
+      {% if page > 1 %}<a class="history-page-link" href="{{ url_for('history', page=page - 1) }}">← {{ _('Newer') }}</a>{% else %}<span></span>{% endif %}
+      <span>{{ _('Page') }} {{ page }} {{ _('of') }} {{ pages }}</span>
+      {% if page < pages %}<a class="history-page-link" href="{{ url_for('history', page=page + 1) }}">{{ _('Older') }} →</a>{% else %}<span></span>{% endif %}
+    </div>
+    <form class="history-clear-form" method="post" action="{{ url_for('clear_history') }}" data-confirm="{{ _('Delete all saved predictions? This cannot be undone.') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="confirm" value="yes">
+      <button type="submit"><span aria-hidden="true">⌫</span>{{ _('Clear History') }}</button>
+    </form>
+  {% else %}
+    <div class="history-empty">
+      <span class="history-empty-icon" aria-hidden="true">⌂</span>
+      <h2>{{ _('No saved predictions yet') }}</h2>
+      <p>{{ _('Once you request a prediction, it will appear here for later reference.') }}</p>
+      <a href="{{ url_for('home') }}">{{ _('Go to forecast') }} <span aria-hidden="true">→</span></a>
+    </div>
+  {% endif %}
 </section>
 {% endblock %}

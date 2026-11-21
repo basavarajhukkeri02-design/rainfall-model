@@ -1,93 +1,70 @@
 <!doctype html>
 <html lang="{{ ui_language }}">
-
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#174d36">
+  <meta name="theme-color" content="#07100c">
   <title>{% block title %}{{ _('AgriRain | Rainfall insights') }}{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='site-languages-v1') }}">
-  <script defer src="{{ url_for('static', filename='js/script.js', v='translator-v1') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='agrirain-dashboard-v2') }}">
+  <script defer src="{{ url_for('static', filename='js/script.js', v='agrirain-dashboard-v2') }}"></script>
 </head>
-
-<body>
+<body class="{% if session.get('user_id') %}has-sidebar{% endif %}">
   <div class="weather-animation-bg" aria-hidden="true"></div>
-  <header class="site-header">
-    <nav class="nav wrap" aria-label="{{ _('Main navigation') }}">
-      <a class="brand" href="{{ url_for('home') }}" aria-label="{{ _('AgriRain home') }}"><span
-          class="brand-mark">A</span><span>Agri<span class="brand-light">Rain</span><small>{{ _('Weather for better
-            growing') }}</small></span></a>
-      <div class="nav-links">
-        <form class="ui-language-control" method="post" action="{{ url_for('set_language') }}" data-language-form>
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="next" value="{{ request.full_path }}">
-          <label class="visually-hidden" for="ui-language">{{ _('Site language') }}</label>
-          <select id="ui-language" name="language" aria-label="{{ _('Site language') }}">
-            <form class="ui-language-control" method="post" action="{{ url_for('set_language') }}" data-language-form>
-
-              <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="next" value="{{ request.full_path }}">
-
-              <label class="visually-hidden" for="ui-language">
-                {{ _('Site language') }}
-              </label>
-
-              <select id="ui-language" name="language" aria-label="{{ _('Site language') }}"
-                onchange="this.form.submit()">
-
-                {% for code, name in ui_languages.items() %}
-                <option value="{{ code }}" {% if code==ui_language %}selected{% endif %}>
-                  {{ name }}
-                </option>
-                {% endfor %}
-
-              </select>
-            </form>
-          </select>
-        </form>
-        {% if session.get('user_id') %}
-        <a href="{{ url_for('home') }}">{{ _('Dashboard') }}</a>
-        <a href="{{ url_for('history') }}">{{ _('Prediction history') }}</a>
-        <a href="{{ url_for('translator') }}">{{ _('Translator') }}</a>
-        <a href="{{ url_for('about') }}">{{ _('About') }}</a>
-        <div class="nav-profile"><span class="profile-avatar" aria-hidden="true">{{ session.get('user_email',
-            'A')[:1]|upper }}</span>
-          <span class="nav-user">{{ session.get('user_email') }}</span>
-          <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="_csrf_token"
-              value="{{ csrf_token }}">
-            <button class="nav-logout" type="submit">{{ _('Sign out') }}</button>
-          </form>
-        </div>
-        {% else %}
-        <a href="{{ url_for('login') }}">{{ _('Log in') }}</a>
-        <a class="nav-register" href="{{ url_for('register') }}">{{ _('Create account') }}</a>
-        {% endif %}
-      </div>
+  {% if session.get('user_id') %}
+  <aside class="app-sidebar" aria-label="{{ _('Main navigation') }}">
+    <a class="brand" href="{{ url_for('home_landing') }}" aria-label="{{ _('AgriRain home') }}">
+      <span class="brand-mark">A</span><span class="brand-name">Agri<span>Rain</span><small>{{ _('Weather for better growing') }}</small></span>
+    </a>
+    <p class="sidebar-label">{{ _('WORKSPACE') }}</p>
+    <nav class="sidebar-nav">
+      <a class="sidebar-link{% if request.endpoint == 'home_landing' %} is-active{% endif %}" href="{{ url_for('home_landing') }}"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg></span>{{ _('Home') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'home' and not request.args.get('section') %} is-active{% endif %}" href="{{ url_for('home') }}"><span class="nav-icon" aria-hidden="true">▦</span>{{ _('Dashboard') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'home' and request.args.get('section') == 'forecast' %} is-active{% endif %}" href="{{ url_for('home', section='forecast') }}#forecast"><span class="nav-icon" aria-hidden="true">☁</span>{{ _('District Weather') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'home' and request.args.get('section') == 'prediction' %} is-active{% endif %}" href="{{ url_for('home', section='prediction') }}#prediction"><span class="nav-icon" aria-hidden="true">◉</span>{{ _('Rainfall Prediction') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'history' %} is-active{% endif %}" href="{{ url_for('history') }}"><span class="nav-icon" aria-hidden="true">▤</span>{{ _('History') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'settings' %} is-active{% endif %}" href="{{ url_for('settings') }}"><span class="nav-icon" aria-hidden="true">⚙</span>{{ _('Settings') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'translator' %} is-active{% endif %}" href="{{ url_for('translator') }}"><span class="nav-icon" aria-hidden="true">文</span>{{ _('Translator') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'about' %} is-active{% endif %}" href="{{ url_for('about') }}"><span class="nav-icon" aria-hidden="true">ⓘ</span>{{ _('About AgriRain') }}</a>
     </nav>
+    <div class="sidebar-bottom">
+      <form class="ui-language-control" method="post" action="{{ url_for('set_language') }}" data-language-form>
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <label for="ui-language">{{ _('Language') }}</label>
+        <select id="ui-language" name="language" aria-label="{{ _('Site language') }}">
+          {% for code, name in ui_languages.items() %}<option value="{{ code }}" {% if code == ui_language %}selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+      </form>
+      <div class="sidebar-user" id="profile-card">
+        <span class="profile-avatar" aria-hidden="true">{{ session.get('user_email', 'A')[:1]|upper }}</span>
+        <span class="sidebar-user-name">{{ session.get('user_email') }}</span>
+      </div>
+      <form method="post" action="{{ url_for('logout') }}" class="logout-form"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="logout-link" type="submit"><span class="nav-icon" aria-hidden="true">⇥</span>{{ _('Logout') }}</button></form>
+    </div>
+  </aside>
+  {% else %}
+  <header class="public-header">
+    <a class="brand" href="{{ url_for('home_landing') }}"><span class="brand-mark">A</span><span class="brand-name">Agri<span>Rain</span><small>{{ _('Weather for better growing') }}</small></span></a>
+    <div class="public-actions">
+      <form class="ui-language-control" method="post" action="{{ url_for('set_language') }}" data-language-form>
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+        <label class="visually-hidden" for="ui-language">{{ _('Site language') }}</label><select id="ui-language" name="language" aria-label="{{ _('Site language') }}">{% for code, name in ui_languages.items() %}<option value="{{ code }}" {% if code == ui_language %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+      </form>
+      <a href="{{ url_for('login') }}">{{ _('Log in') }}</a><a class="public-register" href="{{ url_for('register') }}">{{ _('Create account') }}</a>
+    </div>
   </header>
-  <main>
+  {% endif %}
+  <main class="app-main">
     {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}<div class="wrap flash-list" role="status">
-      {% for category, message in messages %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}
-    </div>{% endif %}
+    {% if messages %}<div class="wrap flash-list" role="status">{% for category, message in messages %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}</div>{% endif %}
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
-  <footer class="footer">
-    <div class="wrap footer-inner">
-      <strong>AgriRain</strong>
-      <span>{{ _('Forecasts inform decisions; they do not guarantee rainfall.') }}</span>
-      <span>{{ _('Student demonstration project') }}</span>
-      <a class="footer-credit" href="https://vocal.media/earth/the-importance-of-rain-for-prosperous-farms"
-        target="_blank" rel="noopener noreferrer">{{ _('Forecast image source: Vocal') }}</a>
-      <a class="footer-credit"
-        href="https://unsplash.com/photos/a-large-field-of-green-grass-under-a-cloudy-sky-O51AL2Du_fM" target="_blank"
-        rel="noopener noreferrer">{{ _('Login rainy-field photo: Unsplash') }}</a>
-      <a class="footer-credit"
-        href="https://unsplash.com/photos/an-aerial-view-of-a-rice-field-surrounded-by-trees-jc2Cga3BbXU"
-        target="_blank" rel="noopener noreferrer">{{ _('Rainforest field photo: Unsplash') }}</a>
-    </div>
-  </footer>
+  <footer class="footer"><div class="wrap footer-inner">
+    <strong>AgriRain</strong><span>{{ _('Forecasts inform decisions; they do not guarantee rainfall.') }}</span><span>{{ _('Student demonstration project') }}</span>
+    <a class="footer-credit" href="https://vocal.media/earth/the-importance-of-rain-for-prosperous-farms" target="_blank" rel="noopener noreferrer">{{ _('Forecast image source: Vocal') }}</a>
+    <a class="footer-credit" href="https://unsplash.com/photos/a-large-field-of-green-grass-under-a-cloudy-sky-O51AL2Du_fM" target="_blank" rel="noopener noreferrer">{{ _('Login rainy-field photo: Unsplash') }}</a>
+    <a class="footer-credit" href="https://unsplash.com/photos/an-aerial-view-of-a-rice-field-surrounded-by-trees-jc2Cga3BbXU" target="_blank" rel="noopener noreferrer">{{ _('Rainforest field photo: Unsplash') }}</a>
+  </div></footer>
 </body>
-
 </html>

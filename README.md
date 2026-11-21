@@ -1,6 +1,6 @@
 # AgriRain — ML-Based Rainfall Prediction for Farmers
 
-AgriRain is a local Flask college mini-project for ten Karnataka districts. It combines Open-Meteo forecast data with an experimental scikit-learn classifier, adds a multilingual word translator, and stores user accounts and each account's prediction records in SQLite. The weather forecast and model estimate are shown as separate outputs.
+AgriRain is a local Flask college mini-project for all 31 Karnataka districts. It combines Open-Meteo forecast data with an experimental scikit-learn classifier, adds a multilingual word translator, and stores user accounts and each account's prediction records in SQLite. The weather forecast and model estimate are shown as separate outputs.
 
 The first page is the login screen. A visitor can create an account with an email and password, then sign in. Passwords are stored as Werkzeug password hashes, not plain text. Prediction history is scoped to the signed-in account; records from the earlier anonymous demo remain unassigned and are not shown to any new account. State-changing forms require a session-bound CSRF token. Set `FLASK_SECRET_KEY` to a private, stable random value when you need sessions to survive app restarts; without it a fresh development secret is generated at process start.
 
@@ -8,11 +8,11 @@ The first page is the login screen. A visitor can create an account with an emai
 
 1. The district selection is mapped to its latitude and longitude in `app.py`.
 2. The Flask application requests the one-day Open-Meteo forecast. It shows minimum and maximum temperature, daily rainfall total, and relative humidity forecast at 3 PM local time.
-3. The saved scikit-learn pipeline receives those four values in the training feature order: `MinTemp`, `MaxTemp`, `Rainfall`, `Humidity3pm`. Its label and, when available, positive-class probability are displayed as an experimental estimate.
+3. The saved Karnataka scikit-learn pipeline receives the previous seven daily rainfall totals as lag and rolling features, the month and day of year, and the selected district. Flask uses the exact feature order and classification threshold stored in `karnataka_model/rainfall_model.pkl`; predictions are for the following day.
 4. Successful predictions are inserted once into SQLite. The POST/redirect/GET flow means refreshing the result page does not submit the form again.
 5. Signed-in users can translate text between eleven Indian languages from the Language Translator page. Translations are supplied by Google Cloud Translation Basic and saved to the user's private history.
 
-The model is trained on Australian weather observations. A held-out split measures performance on that dataset only; this is **not validation for Karnataka**. Train on quality-controlled local observations and evaluate across seasons and districts before using this for real decisions. The model probability is an estimate, not a guarantee. This student demonstration has not had production security testing.
+The Flask prediction path uses the separately trained Karnataka rainfall model. It does not use the legacy root `rainfall_model.pkl`, which was trained on Australian weather data. The Karnataka model is experimental; its probabilities are estimates, not guarantees, and should be evaluated across seasons and districts before real decisions. This student demonstration has not had production security testing.
 
 ## B. Folder structure
 
@@ -105,7 +105,7 @@ python train_model.py
 python app.py
 ```
 
-If the dataset or trained model is missing, the training command or app displays what to do. The app intentionally does not invent forecast values if the API fails.
+The app requires the existing `karnataka_model/rainfall_model.pkl` bundle and does not load the legacy root model as a fallback. It also requires a current Open-Meteo response with all seven prior daily rainfall values; it will not substitute old district records or invent missing inputs.
 
 ## L. Database schema
 
@@ -139,9 +139,9 @@ Download `weatherAUS.csv` from Kaggle's [Rain in Australia dataset](https://www.
 
 ## N. Model training
 
-Run `python train_model.py`. It checks required columns, parses dates, converts malformed feature values to missing values, and keeps only `Yes`/`No` target labels. It holds out the newest 20% of distinct dates for evaluation, fits median imputation and a Random Forest pipeline on earlier data, reports accuracy/precision/recall/F1 and a confusion matrix, then refits the deployment pipeline on all valid labelled rows and writes it to `rainfall_model.pkl`. The chronological holdout prevents training on later rows while evaluating earlier ones. Training reads the same four forecast features requested by the app; no fabricated samples are created.
+`train_model.py` prepares and compares Karnataka rainfall-history models from `karnataka_ml_features.csv`, then writes the selected bundle to `karnataka_model/rainfall_model.pkl`. The Flask app loads that existing bundle and uses its stored threshold. The root `rainfall_model.pkl` is the separate legacy Australian-weather model and is not used for district predictions. Running training is not required to start the app when the Karnataka bundle is present.
 
-This chronological holdout is still only an Australian dataset assessment, not a Karnataka validation or a substitute for station-based verification. A better local model requires matching local observations and future rainfall labels; avoid future-observation leakage when constructing those features.
+The chronological holdout assesses the supplied Karnataka station dataset only and does not replace independent station-based verification. Results depend on the source observations and their district coverage; avoid future-observation leakage when constructing new features.
 
 ## O. Practical testing checklist
 
@@ -153,7 +153,7 @@ This chronological holdout is still only an Australian dataset assessment, not a
 - [ ] Try an SQL-like string as a login email; it must not authenticate or alter database contents.
 - [ ] Create records under two accounts and confirm each account sees and clears only its own records.
 - [ ] Home page loads and navigation links work.
-- [ ] Each of the ten districts can be selected.
+- [ ] Each of the 31 districts can be selected.
 - [ ] Open-Meteo values and forecast date are shown when available.
 - [ ] Submit a prediction after training; see the result and any model probability estimate.
 - [ ] Confirm the corresponding row exists in SQLite using the query above.
@@ -161,7 +161,7 @@ This chronological holdout is still only an Australian dataset assessment, not a
 - [ ] Press Clear history and cancel; rows remain. Confirm the action; rows are removed.
 - [ ] Submit a tampered district value; no prediction should be stored.
 - [ ] Temporarily disconnect from the network; a friendly forecast error appears and the server remains available.
-- [ ] Rename the model file temporarily; the app shows the retraining instruction instead of crashing.
+- [ ] If the Karnataka model bundle is unavailable, the app shows a model error instead of crashing.
 - [ ] Test narrow/mobile viewport; cards and tables remain usable (tables can scroll horizontally).
 - [ ] Open Language Translator and try Kannada to English, English to Kannada, Hindi to Kannada, Kannada to Hindi, English to Telugu, and Telugu to English.
 - [ ] Verify copy, clear text, swap languages, and read-aloud controls in a browser with a voice installed for the selected language.

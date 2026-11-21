@@ -1,0 +1,13 @@
+# Large ML models
+*.pkl
+
+# Large datasets
+*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.venv/

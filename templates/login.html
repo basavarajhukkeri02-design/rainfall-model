@@ -1,5 +1,43 @@
 {% extends 'base.html' %}
 {% block title %}{{ _('Log in') }} | AgriRain{% endblock %}
 {% block content %}
-<section class="auth-shell"><div class="auth-art"><p class="eyebrow">{{ _('AGRIRAIN ACCOUNT') }}</p><h1>{{ _('Welcome back to your fields.') }}</h1><p>{{ _('Sign in to view your district forecast and saved prediction history.') }}</p><div class="auth-leaf" aria-hidden="true">✳</div></div><div class="auth-card panel"><p class="eyebrow">{{ _('ACCOUNT ACCESS') }}</p><h2>{{ _('Log in') }}</h2><p class="auth-subtitle">{{ _('Enter the email and password you registered with.') }}</p><form method="post" action="{{ url_for('login') }}"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><label for="email">{{ _('Email address') }}</label><input id="email" name="email" type="email" autocomplete="email" maxlength="254" required value="{{ request.form.get('email', '') }}"><label for="password">{{ _('Password') }}</label><div class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" required><button class="password-toggle" type="button" data-password-toggle="password" aria-label="{{ _('Show password') }}" aria-pressed="false"><svg class="eye-show" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-hide" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a15.7 15.7 0 0 1-3.1 3.8M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3.1-.5"/></svg></button></div><button class="button auth-button" type="submit">{{ _('Log in') }} <span aria-hidden="true">→</span></button></form><p class="auth-switch">{{ _('New to AgriRain?') }} <a href="{{ url_for('register') }}">{{ _('Create an account') }}</a></p></div></section>
+<section class="login-screen" aria-label="{{ _('AgriRain account login') }}">
+  <div class="login-card">
+    <div class="login-brand-panel">
+      <a class="login-brand" href="{{ url_for('login') }}" aria-label="AgriRain">
+        <span class="login-brand-mark" aria-hidden="true">A</span>
+        <span>Agri<span>Rain</span></span>
+      </a>
+      <div class="login-brand-copy">
+        <p class="login-kicker">{{ _('AGRICULTURE, WITH INSIGHT') }}</p>
+        <h1>{{ _('Grow Smart, Farm Better') }}</h1>
+        <p>{{ _('Weather insight for stronger harvests and more confident growing.') }}</p>
+      </div>
+      <div class="login-brand-foot"><span aria-hidden="true">✳</span>{{ _('Rooted in the land. Ready for tomorrow.') }}</div>
+    </div>
+
+    <div class="login-form-panel">
+      <p class="login-kicker">{{ _('WELCOME BACK') }}</p>
+      <h2>{{ _('Log in to AgriRain') }}</h2>
+      <p class="login-intro">{{ _('Enter your details to continue to your farm dashboard.') }}</p>
+      <form method="post" action="{{ url_for('login') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <label for="email">{{ _('Email address') }}</label>
+        <input id="email" name="email" type="email" autocomplete="email" maxlength="254" required value="{{ request.form.get('email', '') }}">
+
+        <div class="login-password-label"><label for="password">{{ _('Password') }}</label><a href="#password" class="login-forgot">{{ _('Forgot Password?') }}</a></div>
+        <div class="password-field">
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="password-toggle" type="button" data-password-toggle="password" aria-label="{{ _('Show password') }}" aria-pressed="false">
+            <svg class="eye-show" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="eye-hide" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a15.7 15.7 0 0 1-3.1 3.8M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 3.1-.5"/></svg>
+          </button>
+        </div>
+        <label class="login-remember"><input type="checkbox" name="remember"> <span>{{ _('Remember me') }}</span></label>
+        <button class="login-submit" type="submit">{{ _('Login') }} <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="login-signup">{{ _('New to AgriRain?') }} <a href="{{ url_for('register') }}">{{ _('Create an account') }}</a></p>
+    </div>
+  </div>
+</section>
 {% endblock %}
