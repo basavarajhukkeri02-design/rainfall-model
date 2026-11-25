@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}{{ _('Data visualization | AgriRain') }}{% endblock %}
+{% block content %}
+<section class="analytics-page wrap">
+  <header class="analytics-heading"><div><p class="eyebrow">{{ _('WEATHER ANALYTICS') }}</p><h1>{{ _('Data visualization') }}</h1><p>{{ _('Charts use your saved predictions and live Open-Meteo daily rainfall observations.') }}</p></div>
+    <form method="get" class="analytics-district"><label for="analytics-district">{{ _('District') }}</label><select name="district" id="analytics-district" onchange="this.form.submit()">{% for name in districts %}<option value="{{ name }}" {% if name == district %}selected{% endif %}>{{ _(name) }}</option>{% endfor %}</select></form>
+  </header>
+  <div class="analytics-grid">
+    <article class="analytics-card"><p class="eyebrow">{{ _('LIVE WEATHER DATA') }}</p><h2>{{ _('Rainfall history') }}</h2><p class="analytics-subtitle">{{ _(district) }} · {{ _('Open-Meteo daily totals') }}</p>
+      {% if rainfall_history %}<div class="bar-chart" role="img" aria-label="{{ _('Daily rainfall history in millimeters') }}">{% set max_rain = rainfall_history|map(attribute='rainfall')|max %}{% for item in rainfall_history %}<div class="bar-column"><span>{{ '%.1f'|format(item.rainfall) }}</span><i style="height: {{ (item.rainfall / max_rain * 100) if max_rain else 0 }}%" title="{{ item.date }}: {{ item.rainfall }} mm"></i><small>{{ item.date[5:] }}</small></div>{% endfor %}</div><p class="chart-source">{{ _('Observed daily totals from the live district forecast response. No saved rainfall history is available in SQLite.') }}</p>{% else %}<p class="chart-empty">{{ _('Weather history is temporarily unavailable.') }}</p>{% endif %}
+    </article>
+    <article class="analytics-card"><p class="eyebrow">{{ _('YOUR SAVED PREDICTIONS') }}</p><h2>{{ _('Prediction trend') }}</h2><p class="analytics-subtitle">{{ _('Mean estimated probability by prediction date') }}</p>
+      {% if trend %}<div class="bar-chart" role="img" aria-label="{{ _('Prediction probability trend') }}">{% for item in trend[-14:] %}<div class="bar-column"><span>{{ item.probability }}%</span><i class="bar-blue" style="height: {{ item.probability }}%" title="{{ item.date }}: {{ item.probability }}%"></i><small>{{ item.date[5:] }}</small></div>{% endfor %}</div>{% else %}<p class="chart-empty">{{ _('Make and save predictions to build a trend.') }}</p>{% endif %}
+    </article>
+    <article class="analytics-card"><p class="eyebrow">{{ _('ACCOUNT HISTORY') }}</p><h2>{{ _('District comparison') }}</h2><p class="analytics-subtitle">{{ _('Average forecast rainfall in your saved records') }}</p>
+      {% if district_comparison %}<div class="district-bars">{% for item in district_comparison %}<div class="district-bar-row"><span>{{ _(item.district) }}</span><div><i style="width: {{ (item.rainfall / (district_comparison|map(attribute='rainfall')|max) * 100) if district_comparison|map(attribute='rainfall')|max else 0 }}%"></i></div><strong>{{ item.rainfall }} mm</strong></div>{% endfor %}</div>{% else %}<p class="chart-empty">{{ _('District comparisons appear after you save predictions in multiple districts.') }}</p>{% endif %}
+    </article>
+    <article class="analytics-card"><p class="eyebrow">{{ _('LIVE WEATHER DATA') }}</p><h2>{{ _('Rainfall distribution') }}</h2><p class="analytics-subtitle">{{ _('Count of observed days in each rainfall range') }}</p>
+      {% set max_count = rainfall_distribution|map(attribute='count')|max %}<div class="district-bars">{% for item in rainfall_distribution %}<div class="district-bar-row"><span>{{ item.label }}</span><div><i style="width: {{ (item.count / max_count * 100) if max_count else 0 }}%"></i></div><strong>{{ item.count }} {{ _('days') }}</strong></div>{% endfor %}</div>
+    </article>
+    <article class="analytics-card analytics-stats"><p class="eyebrow">{{ _('SAVED RECORDS') }}</p><h2>{{ _('Prediction statistics') }}</h2><div class="stat-pair"><div><strong>{{ records|length }}</strong><span>{{ _('Recent saved records shown') }}</span></div><div><strong>{{ records|selectattr('prediction', 'equalto', 'Rain likely')|list|length }}</strong><span>{{ _('Rain likely results') }}</span></div></div><p class="chart-source">{{ _('Account-scoped records only. These counts reflect the latest 100 records used for the charts.') }}</p></article>
+  </div>
+</section>
+{% endblock %}

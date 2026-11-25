@@ -148,19 +148,19 @@ class AgriRainAppTests(unittest.TestCase):
     @patch("app.get_weather")
     def test_prediction_is_saved_once_and_refresh_does_not_resubmit(self, get_weather, _model):
         get_weather.return_value = self.weather
-        response = self.post_form("/", {"district": "Mysuru"})
+        response = self.post_form("/dashboard", {"district": "Mysuru"})
         response = self.client.get(response.location, follow_redirects=True)
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Rain likely", response.data)
         self.assertEqual(self.count_records(), 1)
-        self.client.get("/")
+        self.client.get("/dashboard")
         self.assertEqual(self.count_records(), 1)
 
     @patch("app.load_model", return_value=(fake_bundle(0.25), None))
     @patch("app.get_weather")
     def test_prediction_page_shows_weather_date_target_date_probability_and_source(self, get_weather, _model):
         get_weather.return_value = self.weather
-        response = self.post_form("/", {"district": "Mysuru"})
+        response = self.post_form("/dashboard", {"district": "Mysuru"})
         page = self.client.get(response.location, follow_redirects=True)
 
         self.assertEqual(page.status_code, 200)
@@ -175,7 +175,7 @@ class AgriRainAppTests(unittest.TestCase):
     @patch("app.get_weather")
     def test_dashboard_renders_values_week_forecast_icons_and_navigation(self, get_weather, _model):
         get_weather.return_value = self.weather
-        page = self.client.get("/?district=Mysuru")
+        page = self.client.get("/dashboard?district=Mysuru")
         self.assertEqual(page.status_code, 200)
         for label in (b"Minimum Temperature", b"Maximum Temperature", b"Rainfall", b"Humidity"):
             self.assertIn(label, page.data)
@@ -198,7 +198,7 @@ class AgriRainAppTests(unittest.TestCase):
         missing_history["karnataka_history_error"] = "Open-Meteo did not return valid rainfall for all seven prior days"
         get_weather.return_value = missing_history
 
-        response = self.post_form("/", {"district": "Mysuru"})
+        response = self.post_form("/dashboard", {"district": "Mysuru"})
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"complete recent rainfall history is missing or invalid", response.data)
@@ -208,7 +208,7 @@ class AgriRainAppTests(unittest.TestCase):
     @patch("app.get_weather")
     def test_end_to_end_real_model_prediction_is_saved(self, get_weather):
         get_weather.return_value = weather_for("Bengaluru Urban")
-        response = self.post_form("/", {"district": "Bengaluru Urban"})
+        response = self.post_form("/dashboard", {"district": "Bengaluru Urban"})
         self.assertEqual(response.status_code, 302)
         page = self.client.get(response.location, follow_redirects=True)
         self.assertEqual(page.status_code, 200)
@@ -303,7 +303,7 @@ class AgriRainAppTests(unittest.TestCase):
         encoder = bundle["pipeline"].named_steps["preprocessor"].named_transformers_["district"].named_steps["encoder"]
         self.assertEqual(districts, set(encoder.categories_[0]))
         with patch("app.get_weather", side_effect=lambda district: weather_for(district)):
-            page = self.client.get("/")
+            page = self.client.get("/dashboard")
             self.assertEqual(page.status_code, 200)
             select = page.get_data(as_text=True).split('<select id="district"', 1)[1].split("</select>", 1)[0]
             rendered = set(re.findall(r'<option value="([^"]+)"', select))
@@ -311,7 +311,7 @@ class AgriRainAppTests(unittest.TestCase):
 
             for district in sorted(districts):
                 with self.subTest(district=district):
-                    response = self.post_form("/", {"district": district})
+                    response = self.post_form("/dashboard", {"district": district})
                     self.assertEqual(response.status_code, 302)
 
         with app.database_connection() as connection:
@@ -322,7 +322,7 @@ class AgriRainAppTests(unittest.TestCase):
 
     def test_default_district_is_bengaluru_urban(self):
         with patch("app.get_weather", return_value=weather_for("Bengaluru Urban")):
-            response = self.client.get("/")
+            response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'<option value="Bengaluru Urban" selected>', response.data)
 
@@ -474,7 +474,7 @@ class AgriRainAppTests(unittest.TestCase):
         weather["karnataka_history_features"] = None
         weather["karnataka_history_error"] = "Open-Meteo did not return valid rainfall for all seven prior days"
         with patch("app.get_weather", return_value=weather):
-            response = self.post_form("/", {"district": "Mysuru"})
+            response = self.post_form("/dashboard", {"district": "Mysuru"})
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"recent rainfall history is missing or invalid", response.data)
         self.assertEqual(self.count_records(), 0)
@@ -482,21 +482,21 @@ class AgriRainAppTests(unittest.TestCase):
     @patch("app.get_weather")
     def test_invalid_district_is_not_saved(self, get_weather):
         get_weather.return_value = self.weather
-        response = self.post_form("/", {"district": "Not a district"})
+        response = self.post_form("/dashboard", {"district": "Not a district"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.count_records(), 0)
 
     @patch("app.load_model", return_value=(None, "Model unavailable"))
     @patch("app.get_weather", side_effect=requests.Timeout)
     def test_weather_timeout_is_shown_without_server_error(self, _weather, _model):
-        response = self.client.get("/")
+        response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Weather forecast is temporarily unavailable", response.data)
 
     @patch("app.load_model", return_value=(fake_bundle(), None))
     @patch("app.get_weather", side_effect=requests.Timeout)
     def test_manual_weather_values_do_not_replace_missing_history(self, _weather, _model):
-        response = self.post_form("/", {
+        response = self.post_form("/dashboard", {
             "district": "Mysuru", "observed_min_temp": "19.0",
             "observed_max_temp": "29.0", "observed_rainfall": "2.5",
             "observed_humidity": "72",
@@ -508,7 +508,7 @@ class AgriRainAppTests(unittest.TestCase):
     @patch("app.load_model", return_value=(fake_bundle(), None))
     @patch("app.get_weather", side_effect=requests.Timeout)
     def test_missing_manual_observation_does_not_predict(self, _weather, _model):
-        response = self.post_form("/", {
+        response = self.post_form("/dashboard", {
             "district": "Mysuru", "observed_min_temp": "19.0",
         })
         self.assertEqual(response.status_code, 200)
@@ -535,20 +535,72 @@ class AgriRainAppTests(unittest.TestCase):
         self.assertEqual(self.count_records(), 1)
 
     @patch("app.get_weather")
-    def test_home_history_and_about_pages_render(self, get_weather):
+    def test_home_and_dashboard_render_as_separate_pages(self, get_weather):
         get_weather.return_value = self.weather
-        home = self.client.get("/")
+        landing = self.client.get("/")
+        self.assertEqual(landing.status_code, 200)
+        self.assertIn(b"Smart Rainfall</span><span>Prediction for a</span><span>Better Tomorrow.", landing.data)
+        self.assertNotIn(b"Weather dashboard", landing.data)
+        self.assertNotIn(b"prediction-form", landing.data)
+        self.assertIn(b"Bengaluru Urban", landing.data)
+        self.assertIn(b"data-live-clock", landing.data)
+        self.assertEqual(self.client.get("/home").status_code, 302)
+        with patch("app.get_weather", return_value=self.weather):
+            dashboard = self.client.get("/dashboard")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Weather dashboard", dashboard.data)
+        self.assertNotIn(b"landing-title", dashboard.data)
+
+    @patch("app.get_weather")
+    def test_dashboard_history_and_about_pages_render(self, get_weather):
+        get_weather.return_value = self.weather
+        home = self.client.get("/dashboard")
         self.assertEqual(home.status_code, 200)
         self.assertIn(b"YOUR FIELD PROFILE", home.data)
         self.assertIn(b"owner@example.com", home.data)
         self.assertEqual(self.client.get("/history").status_code, 200)
         self.assertEqual(self.client.get("/about").status_code, 200)
 
+    def test_language_selector_is_available_in_header_and_settings(self):
+        with self.client.session_transaction() as user_session:
+            user_session["ui_language"] = "kn"
+        dashboard = self.client.get("/dashboard")
+        settings = self.client.get("/settings")
+        self.assertIn(b'<html lang="kn"', dashboard.data)
+        self.assertIn(b'data-open-language-modal', dashboard.data)
+        self.assertIn(b'name="language"', dashboard.data)
+        self.assertIn(b"data-language-form", settings.data)
+        self.assertIn(app.translate("Language preference", "kn").encode(), settings.data)
+
+    def test_all_site_languages_remain_selectable(self):
+        for code in app.LANGUAGES:
+            with self.subTest(language=code):
+                response = self.post_form("/set-language", {"language": code, "next": "/settings"})
+                self.assertEqual(response.status_code, 302)
+                page = self.client.get("/settings")
+                self.assertIn(f'<html lang="{code}"'.encode(), page.data)
+                self.assertIn(f'name="language" value="{code}"'.encode(), page.data)
+                self.assertIn(app.LANGUAGES[code].encode("utf-8"), page.data)
+                if code == "ur":
+                    self.assertIn(b'dir="rtl"', page.data)
+
+    def test_language_menu_has_mobile_viewport_limits(self):
+        css = (app.BASE_DIR / "static" / "css" / "style.css").read_text(encoding="utf-8")
+        template = self.client.get("/settings").data
+        self.assertIn(b'id="language-modal"', template)
+        self.assertIn(b'role="dialog" aria-modal="true"', template)
+        self.assertIn("inset:0; display:grid; width:100vw; height:100vh; height:100dvh", css)
+        self.assertIn("width:min(90vw,380px)", css)
+        self.assertIn("overflow-y:auto", css)
+        # The centered panel resolves to 337.5px at 375px and 380px at 1440px.
+        self.assertEqual(min(0.9 * 375, 380), 337.5)
+        self.assertEqual(min(0.9 * 1440, 380), 380)
+
     def test_translator_page_is_authenticated_and_shows_supported_languages(self):
         response = self.client.get("/translator")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Language Translator", response.data)
-        for language in ("Kannada", "English", "Hindi", "Telugu", "Tamil", "Malayalam", "Marathi", "Bengali", "Gujarati", "Punjabi", "Urdu"):
+        for language in ("Kannada", "English", "Hindi", "Telugu", "Tamil", "Malayalam", "Marathi", "Bengali", "Gujarati", "Punjabi", "Odia", "Urdu"):
             self.assertIn(language.encode(), response.data)
 
     @patch.dict("os.environ", {"GOOGLE_TRANSLATE_API_KEY": "test-server-key"})
@@ -558,12 +610,12 @@ class AgriRainAppTests(unittest.TestCase):
             "data": {"translations": [{"translatedText": "mocked test result"}]}
         }
         pairs = [
-            ("kn", "en", "ಮಳೆ", "Rain"),
-            ("en", "kn", "Rain", "ಮಳೆ"),
-            ("hi", "kn", "बारिश", "ಮಳೆ"),
-            ("kn", "hi", "ಮಳೆ", "बारिश"),
-            ("en", "te", "Rain", "వర్షం"),
-            ("te", "en", "వర్షం", "Rain"),
+            ("kn", "en", "à²®à²³à³†", "Rain"),
+            ("en", "kn", "Rain", "à²®à²³à³†"),
+            ("hi", "kn", "à¤¬à¤¾à¤°à¤¿à¤¶", "à²®à²³à³†"),
+            ("kn", "hi", "à²®à²³à³†", "à¤¬à¤¾à¤°à¤¿à¤¶"),
+            ("en", "te", "Rain", "à°µà°°à±à°·à°‚"),
+            ("te", "en", "à°µà°°à±à°·à°‚", "Rain"),
         ]
         for source, target, phrase, _expected_example in pairs:
             with self.subTest(source=source, target=target):
@@ -576,6 +628,20 @@ class AgriRainAppTests(unittest.TestCase):
                 self.assertNotIn("test-server-key", response.get_data(as_text=True))
         with app.database_connection() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM translation_history").fetchone()[0], len(pairs))
+
+    @patch.dict("os.environ", {"GOOGLE_TRANSLATE_API_KEY": "test-server-key"})
+    @patch("app.requests.post")
+    def test_all_supported_translation_languages_are_accepted(self, post):
+        post.return_value.json.return_value = {
+            "data": {"translations": [{"translatedText": "translated"}]}
+        }
+        with patch.object(app, "TRANSLATION_RATE_LIMIT", len(app.TRANSLATION_LANGUAGES) + 1):
+            for code in app.TRANSLATION_LANGUAGES:
+                with self.subTest(language=code):
+                    target = "kn" if code == "en" else "en"
+                    response = self.post_translation({"text": "rain", "source": code, "target": target})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(post.call_args.kwargs["json"]["source"], code)
 
     @patch.dict("os.environ", {}, clear=False)
     def test_translation_without_provider_key_returns_setup_error_without_fake_result(self):
@@ -613,7 +679,7 @@ class AgriRainAppTests(unittest.TestCase):
     @patch("app.requests.post")
     def test_translation_endpoint_rate_limit_and_provider_failure(self, post):
         post.return_value.json.return_value = {
-            "data": {"translations": [{"translatedText": "ಮಳೆ"}]}
+            "data": {"translations": [{"translatedText": "à²®à²³à³†"}]}
         }
         with patch.object(app, "TRANSLATION_RATE_LIMIT", 1):
             first = self.post_translation({"text": "rain", "source": "en", "target": "kn"})
@@ -633,8 +699,8 @@ class AgriRainAppTests(unittest.TestCase):
                    (user_id,source_language,target_language,source_text,translated_text,created_at)
                    VALUES (?,?,?,?,?,?)""",
                 [
-                    (self.user_id, "en", "kn", "rain", "ಮಳೆ", "2026-10-26T10:00:00+05:30"),
-                    (other_id, "en", "hi", "rain", "बारिश", "2026-10-26T10:00:00+05:30"),
+                    (self.user_id, "en", "kn", "rain", "à²®à²³à³†", "2026-10-26T10:00:00+05:30"),
+                    (other_id, "en", "hi", "rain", "à¤¬à¤¾à¤°à¤¿à¤¶", "2026-10-26T10:00:00+05:30"),
                 ],
             )
         self.post_form("/clear-translation-history", {"confirm": "yes"})
@@ -677,7 +743,7 @@ class AgriRainAppTests(unittest.TestCase):
         response = self.post_form("/logout", {})
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.location)
-        self.assertEqual(self.client.get("/").status_code, 302)
+        self.assertEqual(self.client.get("/").status_code, 200)
 
     def test_main_page_clear_history_redirects_back_home(self):
         with app.database_connection() as connection:
@@ -689,7 +755,7 @@ class AgriRainAppTests(unittest.TestCase):
             "/clear-history", {"confirm": "yes", "return_to": "home"}
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.location, "/")
+        self.assertEqual(response.location, "/dashboard")
         self.assertEqual(self.count_records(), 0)
 
     def test_history_only_shows_the_signed_in_users_records(self):

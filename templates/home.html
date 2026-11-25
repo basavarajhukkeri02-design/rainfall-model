@@ -1,20 +1,71 @@
 {% extends 'base.html' %}
-{% block title %}{{ _('Home | AgriRain') }}{% endblock %}
+{% block title %}{{ _('AgriRain | Smart rainfall prediction') }}{% endblock %}
 {% block content %}
-<section class="workspace-page home-landing-page">
-  <section class="home-welcome-card">
-    <div class="home-welcome-copy">
-      <p class="eyebrow">{{ _('KARNATAKA · AGRICULTURE WEATHER') }}</p>
-      <h1>{{ _('Grow with a clearer view.') }}</h1>
-      <p>{{ _('Welcome to AgriRain. Explore local weather, review rainfall outlooks, and keep your farm decisions informed.') }}</p>
-      <a class="workspace-primary-link" href="{{ url_for('home') }}">{{ _('Open Dashboard') }} <span aria-hidden="true">→</span></a>
+<main class="landing-page">
+  <section class="landing-hero" aria-labelledby="landing-title">
+    <div class="landing-hero-inner">
+      <div class="landing-copy">
+        <div class="landing-hero-brand"><span class="agrirain-mark" aria-hidden="true"><i></i><b></b></span><span><strong>AgriRain</strong><small>{{ _('WEATHER FOR BETTER GROWING') }}</small></span></div>
+        <p class="landing-kicker"><span></span>{{ _('KARNATAKA WEATHER INTELLIGENCE') }}</p>
+        <h1 id="landing-title"><span>{{ _('Smart Rainfall') }}</span><span>{{ _('Prediction for a') }}</span><span>{{ _('Better Tomorrow.') }}</span></h1>
+        <p class="landing-lead">{{ _('Empowering Karnataka farmers with intelligent weather forecasts and machine learning insights.') }}</p>
+        <div class="landing-actions"><a class="landing-button landing-button-primary" href="{{ url_for('home') }}">{{ _('Get Started') }} <span aria-hidden="true">&rarr;</span></a><a class="landing-button landing-button-secondary" href="#features">{{ _('Explore Features') }} <span aria-hidden="true">&#8595;</span></a></div>
+        <div class="landing-clock-panel" aria-label="{{ _('Your local date and time') }}"><span class="landing-clock-icon" aria-hidden="true">&#128197;</span><span><strong data-live-date>{{ _('Loading date') }}</strong><small><span aria-hidden="true">&#128337;</span> <time data-live-clock>{{ _('Loading time') }}</time></small></span></div>
+      </div>
+      <div class="landing-art">
+        <img class="landing-art-image" src="{{ url_for('static', filename='images/agrirain-hero.png') }}" alt="{{ _('Sunlit green Karnataka farmland with distant hills') }}">
+        <div class="landing-art-label"><span class="landing-live-dot"></span>{{ _('GROW WITH LOCAL INSIGHT') }}</div>
+      </div>
     </div>
-    <div class="home-welcome-mark" aria-hidden="true">✳</div>
+    <div class="landing-hero-bottom"><span>{{ _('Local forecasts. Thoughtful decisions.') }}</span><span>{{ _('Built for Karnataka agriculture') }}</span></div>
   </section>
-  <section class="home-shortcuts" aria-label="{{ _('AgriRain shortcuts') }}">
-    <a href="{{ url_for('home', section='forecast') }}#forecast"><span aria-hidden="true">☁</span><strong>{{ _('District Weather') }}</strong><small>{{ _('Browse local conditions across Karnataka.') }}</small></a>
-    <a href="{{ url_for('home', section='prediction') }}#prediction"><span aria-hidden="true">◉</span><strong>{{ _('Rainfall Prediction') }}</strong><small>{{ _('View the rainfall outlook for your district.') }}</small></a>
-    <a href="{{ url_for('history') }}"><span aria-hidden="true">▤</span><strong>{{ _('History') }}</strong><small>{{ _('Return to your saved predictions.') }}</small></a>
+
+  <section class="landing-live-weather" aria-labelledby="landing-weather-title">
+    <div class="landing-weather-heading"><div><p class="landing-eyebrow">{{ _('LIVE DISTRICT CONDITIONS') }}</p><h2 id="landing-weather-title">{{ _('Weather right now') }}</h2><p>{{ _('Current forecast from Open-Meteo for a Karnataka district.') }}</p></div>
+      <form class="landing-district-form" method="get" action="{{ url_for('home_landing') }}" data-landing-weather-form data-loading-label="{{ _('Loading weather...') }}">
+        <label for="landing-district">{{ _('Selected district') }}</label><div><select id="landing-district" name="district">{% for name in districts %}<option value="{{ name }}" {% if name == district %}selected{% endif %}>{{ _(name) }}</option>{% endfor %}</select><button type="submit" data-weather-submit><span data-weather-submit-label>{{ _('Update weather') }}</span><span class="landing-button-arrow" aria-hidden="true">&rarr;</span></button></div>
+      </form>
+    </div>
+    {% if weather %}
+    <article class="landing-weather-card">
+      <div class="landing-weather-condition"><span class="landing-weather-icon landing-weather-icon--{{ weather.weather_condition }}" aria-hidden="true">{% if weather.weather_condition in ['rainy','thunderstorm'] %}&#127783;{% elif weather.weather_condition == 'cloudy' %}&#9729;{% elif weather.weather_condition == 'partly-cloudy' %}&#9925;{% elif weather.weather_condition == 'snowy' %}&#10052;{% elif weather.weather_condition == 'clear-night' %}&#9790;{% elif weather.weather_condition == 'sunny' %}&#9728;{% else %}&#10067;{% endif %}</span><div><span class="landing-weather-place">{{ _(district_label) }}, {{ _('Karnataka') }}</span><strong>{{ _(weather.weather_condition_label) }}</strong><small>{{ _('Forecast for') }} {{ weather.forecast_date }}</small></div></div>
+      <div class="landing-weather-temperature">{% if weather.current_temp is not none %}{{ '%.0f'|format(weather.current_temp) }}{% else %}&mdash;{% endif %}<span>&deg;C</span></div>
+      <div class="landing-weather-stat"><span>&#128167;</span><small>{{ _('Humidity') }}</small><strong>{{ '%.0f'|format(weather.humidity) }}%</strong></div>
+      <div class="landing-weather-stat"><span>&#127783;</span><small>{{ _('Rainfall') }}</small><strong>{{ '%.1f'|format(weather.rainfall) }} mm</strong></div>
+      <div class="landing-weather-updated"><span class="landing-live-dot"></span><span>{{ _('Last updated') }} <time data-weather-updated data-updated-at="{{ weather_updated_at }}">{{ _('just now') }}</time></span></div>
+    </article>
+    {% elif weather_error %}
+    <div class="landing-weather-error" role="status"><span aria-hidden="true">&#9888;</span><div><strong>{{ _('Live weather is unavailable') }}</strong><p>{{ _(weather_error) }}</p></div><button type="button" data-weather-retry>{{ _('Try again') }}</button></div>
+    {% else %}<div class="landing-weather-loading" role="status"><span class="landing-spinner"></span>{{ _('Loading live district weather...') }}</div>{% endif %}
   </section>
-</section>
+
+  <section class="landing-stats" aria-label="{{ _('AgriRain project capabilities') }}">
+    <article><span class="landing-stat-icon">&#9873;</span><strong>{{ district_count }}</strong><span>{{ _('Karnataka districts supported') }}</span></article>
+    <article><span class="landing-stat-icon">&#9729;</span><strong>{{ weather_parameter_count }}</strong><span>{{ _('Live weather parameters') }}</span></article>
+    <article><span class="landing-stat-icon">&#10022;</span><strong>{{ model_feature_count }}</strong><span>{{ _('Model input features') }}</span></article>
+    <article><span class="landing-stat-icon">&#8594;</span><strong>{{ _('Next day') }}</strong><span>{{ _('Rainfall estimate horizon') }}</span></article>
+  </section>
+
+  <section class="landing-section landing-about" id="about-project">
+    <div class="landing-section-heading"><p class="landing-eyebrow">{{ _('ABOUT AGRIRAIN') }}</p><h2>{{ _('Helping make rainfall information easier to use.') }}</h2><p>{{ _('AgriRain is a Karnataka-focused project that brings local weather data and a machine learning rainfall estimate together in one clear experience.') }}</p></div>
+    <div class="landing-about-grid"><article><span class="landing-card-icon">&#10067;</span><p class="landing-card-label">{{ _('THE PROBLEM') }}</p><h3>{{ _('Weather decisions are local.') }}</h3><p>{{ _('Farm activities depend on local rainfall, but useful weather information can be spread across different sources and formats.') }}</p></article><article><span class="landing-card-icon">&#10024;</span><p class="landing-card-label">{{ _('THE SOLUTION') }}</p><h3>{{ _('Local forecast with model context.') }}</h3><p>{{ _('AgriRain pairs district forecasts with an experimental next-day estimate based on recent rainfall history.') }}</p></article><article><span class="landing-card-icon">&#127793;</span><p class="landing-card-label">{{ _('THE OBJECTIVE') }}</p><h3>{{ _('More context for farm planning.') }}</h3><p>{{ _('Help farmers explore conditions, review rainfall patterns and keep their saved estimates available in one place.') }}</p></article></div>
+  </section>
+
+  <section class="landing-how" id="how-it-works"><div class="landing-section landing-how-inner"><div class="landing-section-heading"><p class="landing-eyebrow">{{ _('HOW IT WORKS') }}</p><h2>{{ _('Six steps from weather data to a useful outlook.') }}</h2><p>{{ _('The workflow moves from observed conditions through preparation and analysis to a model estimate and readable results.') }}</p><a class="landing-inline-link" href="{{ url_for('home') }}#prediction">{{ _('Explore the prediction dashboard') }} &rarr;</a></div><div class="landing-steps"><article><span>&#9729;</span><div><h3>{{ _('1. Weather Data Collection') }}</h3><p>{{ _('Fetch district forecasts and recent rainfall from Open-Meteo.') }}</p></div></article><article><span>&#9881;</span><div><h3>{{ _('2. Data Preprocessing') }}</h3><p>{{ _('Check dates, valid ranges and required inputs before use.') }}</p></div></article><article><span>&#9638;</span><div><h3>{{ _('3. Exploratory Data Analysis') }}</h3><p>{{ _('Review district rainfall history and patterns in the prepared data.') }}</p></div></article><article><span>&#10022;</span><div><h3>{{ _('4. Machine Learning') }}</h3><p>{{ _('Apply the saved Karnataka classifier to the model feature set.') }}</p></div></article><article><span>&#127782;</span><div><h3>{{ _('5. Rainfall Prediction') }}</h3><p>{{ _('Estimate the likelihood of rain for the following day.') }}</p></div></article><article><span>&#9636;</span><div><h3>{{ _('6. Results and Visualization') }}</h3><p>{{ _('Present forecast values, saved records and available analytics.') }}</p></div></article></div></div></section>
+
+  <section class="landing-section" id="features"><div class="landing-section-heading"><p class="landing-eyebrow">{{ _('AGRIRAIN FEATURES') }}</p><h2>{{ _('The tools you need, in one place.') }}</h2><p>{{ _('Explore the working tools in the AgriRain application.') }}</p></div><div class="landing-feature-grid">
+    <a href="{{ url_for('home') }}#prediction"><span>&#127782;</span><h3>{{ _('Smart Rainfall Prediction') }}</h3><p>{{ _('Request a next-day rainfall estimate from the Karnataka model.') }}</p><small>{{ _('Explore prediction') }} &rarr;</small></a>
+    <a href="{{ url_for('home') }}#forecast"><span>&#127780;</span><h3>{{ _('District-wise Weather') }}</h3><p>{{ _('Review current conditions and upcoming district forecasts.') }}</p><small>{{ _('View the dashboard') }} &rarr;</small></a>
+    <a href="{{ url_for('history') }}"><span>&#9636;</span><h3>{{ _('Weather Records') }}</h3><p>{{ _('Return to your saved, account-specific prediction records.') }}</p><small>{{ _('Open records') }} &rarr;</small></a>
+    <a href="{{ url_for('visualizations') }}"><span>&#9638;</span><h3>{{ _('Data Visualization') }}</h3><p>{{ _('Explore rainfall history, distribution and prediction trends.') }}</p><small>{{ _('View visualizations') }} &rarr;</small></a>
+    <a href="{{ url_for('performance') }}"><span>&#9651;</span><h3>{{ _('Model Performance') }}</h3><p>{{ _('Review the documented evaluation metrics and limitations.') }}</p><small>{{ _('See model results') }} &rarr;</small></a>
+  </div></section>
+
+  <section class="landing-benefits"><div class="landing-section landing-benefits-inner"><div><p class="landing-eyebrow">{{ _('FOR KARNATAKA FARMERS') }}</p><h2>{{ _('Plan with local weather in view.') }}</h2><p>{{ _('AgriRain supports farm planning by making district forecasts, recent rainfall and model estimates easier to explore. It is an informational tool and does not replace local advisories.') }}</p><a href="{{ url_for('about') }}" class="landing-inline-link">{{ _('Learn more about the project') }} &rarr;</a></div><ul><li>{{ _('Check district rainfall and temperature outlooks') }}</li><li>{{ _('Compare weather conditions across forecast days') }}</li><li>{{ _('Keep saved estimates in your private account history') }}</li><li>{{ _('Review the model evaluation before interpreting an estimate') }}</li></ul></div></section>
+
+  <section class="landing-section landing-tech" id="technology"><div class="landing-section-heading"><p class="landing-eyebrow">{{ _('TECHNOLOGY STACK') }}</p><h2>{{ _('Built with practical, proven tools.') }}</h2></div><div class="landing-tech-row"><span><b>Python</b><small>{{ _('Application logic') }}</small></span><span><b>Flask</b><small>{{ _('Web framework') }}</small></span><span><b>Machine Learning</b><small>{{ _('Rainfall estimate') }}</small></span><span><b>Scikit-learn</b><small>{{ _('Model pipeline') }}</small></span><span><b>SQLite</b><small>{{ _('Account records') }}</small></span><span><b>Open-Meteo API</b><small>{{ _('Weather forecasts') }}</small></span><span><b>HTML</b><small>{{ _('Page structure') }}</small></span><span><b>CSS</b><small>{{ _('Responsive design') }}</small></span><span><b>JavaScript</b><small>{{ _('Browser interactions') }}</small></span></div></section>
+
+  <section class="landing-cta"><div><p class="landing-eyebrow">{{ _('READY TO EXPLORE?') }}</p><h2>{{ _('Bring local rainfall insight into view.') }}</h2><p>{{ _('Choose a Karnataka district and explore the live forecast and prediction tools.') }}</p></div><a class="landing-button landing-button-primary" href="{{ url_for('home') }}">{{ _('Get Started') }} <span aria-hidden="true">&rarr;</span></a></section>
+  <footer class="landing-footer"><div class="landing-footer-top"><a class="landing-footer-brand" href="{{ url_for('home_landing') }}"><span class="agrirain-mark" aria-hidden="true"><i></i><b></b></span><span><strong>AgriRain</strong><small>{{ _('Smart rainfall insights') }}</small></span></a><p>{{ _('District weather and rainfall prediction insights for Karnataka agriculture.') }}</p><span class="landing-footer-built">{{ _('Built for Karnataka Agriculture') }}</span></div><div class="landing-footer-bottom"><span>&copy; {{ current_year }} AgriRain</span><nav aria-label="{{ _('Footer navigation') }}"><a href="{{ url_for('home_landing') }}">{{ _('Home') }}</a><a href="{{ url_for('home') }}">{{ _('Dashboard') }}</a><a href="#features">{{ _('Features') }}</a><a href="{{ url_for('about') }}">{{ _('About') }}</a><a href="#technology">{{ _('Technology') }}</a></nav><span>{{ _('Forecasts are estimates, not guarantees.') }}</span></div></footer>
+</main>
 {% endblock %}

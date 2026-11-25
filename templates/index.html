@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block head_scripts %}<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js"></script><script defer src="{{ url_for('static', filename='js/rainfall_analytics.js', v='1') }}"></script>{% endblock %}
 {% macro weather_icon(condition, label, compact=false) -%}
 <span class="weather-icon weather-icon--{{ condition }}{% if compact %} weather-icon--compact{% endif %}" data-weather-icon data-condition="{{ condition }}" role="img" aria-label="{{ label }}">
   <span class="weather-icon__sun-rays" aria-hidden="true"></span><span class="weather-icon__sun" aria-hidden="true"></span>
@@ -12,7 +13,7 @@
 <div class="dashboard-page wrap">
   <header class="dashboard-topbar">
     <div><p class="eyebrow">{{ _('KARNATAKA · LOCAL WEATHER') }}</p><h1>{{ _('Weather dashboard') }}</h1><p class="topbar-copy">{{ _('A clearer view of local conditions and rainfall outlook.') }}</p></div>
-    <div class="today-chip"><span class="today-chip-dot"></span><span>{{ _('Local forecast') }}</span><strong>{{ weather.forecast_date if weather else _('Today') }}</strong></div>
+    <div class="dashboard-header-meta"><div class="today-chip"><span class="today-chip-dot"></span><span>{{ _('Live district forecast') }}</span><strong>{{ weather.forecast_date if weather else _('Today') }}</strong></div><span class="dashboard-clock" data-local-clock></span><span class="dashboard-user">{{ session.get('user_email', '') }}</span></div>
   </header>
 
   <section class="dashboard-grid" aria-label="{{ _('Weather and rainfall dashboard') }}">
@@ -50,10 +51,10 @@
       </section>
 
       <section class="metric-grid" aria-label="{{ _('Four weather values') }}">
-        <article class="weather-metric"><span class="metric-symbol metric-symbol--cool">⌄</span><span class="metric-label">{{ _('Minimum Temperature') }}</span><strong>{{ '%.1f'|format(weather.min_temp) if weather else '—' }}<small>°C</small></strong><span class="metric-footnote">{{ _('Today') }}</span></article>
-        <article class="weather-metric"><span class="metric-symbol metric-symbol--warm">⌃</span><span class="metric-label">{{ _('Maximum Temperature') }}</span><strong>{{ '%.1f'|format(weather.max_temp) if weather else '—' }}<small>°C</small></strong><span class="metric-footnote">{{ _('Today') }}</span></article>
-        <article class="weather-metric"><span class="metric-symbol metric-symbol--rain">⌁</span><span class="metric-label">{{ _('Rainfall') }}</span><strong>{{ '%.1f'|format(weather.rainfall) if weather else '—' }}<small>mm</small></strong><span class="metric-footnote">{{ _('Daily total') }}</span></article>
-        <article class="weather-metric"><span class="metric-symbol metric-symbol--humidity">◌</span><span class="metric-label">{{ _('Humidity') }}</span><strong>{{ '%.0f'|format(weather.humidity) if weather else '—' }}<small>%</small></strong><span class="metric-footnote">{{ _('At 3 PM') }}</span></article>
+        <article class="weather-metric"><span class="metric-symbol metric-symbol--cool">☼</span><span class="metric-label">{{ _('Forecast status') }}</span><strong class="metric-status-value">{{ _(weather.weather_condition_label) if weather else '—' }}</strong><span class="metric-footnote">{{ _('Live Open-Meteo condition') }}</span></article>
+        <article class="weather-metric"><span class="metric-symbol metric-symbol--rain">⌁</span><span class="metric-label">{{ _('Rainfall') }}</span><strong>{{ '%.1f'|format(weather.rainfall) if weather else '—' }}<small>mm</small></strong><span class="metric-footnote">{{ _('Expected daily total') }}</span></article>
+        <article class="weather-metric"><span class="metric-symbol metric-symbol--warm">°</span><span class="metric-label">{{ _('Temperature / Humidity') }}</span><strong>{{ '%.0f'|format(weather.min_temp) if weather else '—' }}–{{ '%.0f'|format(weather.max_temp) if weather else '—' }}<small> °C</small></strong><span class="metric-footnote">{{ _('Minimum Temperature') }} / {{ _('Maximum Temperature') }} · {{ '%.0f'|format(weather.humidity) if weather else '—' }}% {{ _('Humidity at 3 PM') }}</span></article>
+        <article class="weather-metric"><span class="metric-symbol metric-symbol--humidity">▤</span><span class="metric-label">{{ _('Prediction records') }}</span><strong>{{ profile['prediction_count'] if profile else 0 }}</strong><span class="metric-footnote">{{ _('Saved to your account') }}</span></article>
       </section>
 
       <section class="forecast-section" aria-labelledby="weekly-heading">
@@ -67,6 +68,24 @@
             <time datetime="{{ day.date }}">{{ day.date }}</time>
           </article>{% endfor %}
         </div>{% else %}<p class="forecast-unavailable">{{ _('Weekly forecast data is temporarily unavailable.') }}</p>{% endif %}
+      </section>
+
+      <section class="dashboard-chart-grid" aria-label="{{ _('Rainfall analytics') }}">
+        <header class="dashboard-chart-section-heading"><p class="eyebrow">{{ _('DISTRICT RAINFALL INSIGHTS') }}</p><h2>{{ _('Rainfall analytics') }}</h2></header>
+        <script id="rainfall-analytics-data" type="application/json">{{ rainfall_analytics|tojson }}</script>
+        <article class="dashboard-chart-card"><p class="eyebrow">{{ _('OPEN-METEO OBSERVATIONS') }}</p><h2>{{ _('7-day rainfall trend') }}</h2><p>{{ _(district) }} · {{ _('daily rainfall in millimeters') }}</p>
+          {% if rainfall_analytics.recent.labels %}<div class="dashboard-chart-plot"><canvas id="rainfall-seven-day-chart" role="img" aria-label="{{ _('Seven-day rainfall line chart') }}"></canvas></div>{% else %}<p class="chart-empty">{{ _('Recent rainfall observations are unavailable.') }}</p>{% endif %}
+        </article>
+        <article class="dashboard-chart-card"><p class="eyebrow">{{ _('KARNATAKA RAINFALL DATASET') }}</p><h2>{{ _('Monthly rainfall') }}</h2><p>{{ _('Recent monthly totals from district-average daily observations (mm)') }}</p>
+          {% if rainfall_analytics.monthly.labels %}<div class="dashboard-chart-plot"><canvas id="rainfall-monthly-chart" role="img" aria-label="{{ _('Monthly rainfall bar chart') }}"></canvas></div><p class="dashboard-chart-source">{{ _('Station samples are averaged by day before monthly accumulation.') }}</p>{% else %}<p class="chart-empty">{{ _('Monthly rainfall history is unavailable.') }}</p>{% endif %}
+        </article>
+        <article class="dashboard-chart-card"><p class="eyebrow">{{ _('HELD-OUT MODEL TEST DATA') }}</p><h2>{{ _('Actual vs predicted rain occurrence') }}</h2><p>{{ _('Share of historical observations classified as rainy') }}</p>
+          {% if rainfall_analytics.comparison.labels %}<div class="dashboard-chart-plot"><canvas id="rainfall-comparison-chart" role="img" aria-label="{{ _('Actual versus predicted rain occurrence chart') }}"></canvas></div><p class="dashboard-chart-source">{{ rainfall_analytics.comparison.source }} · {{ _('Actual and predicted rainy share (%)') }}</p>{% else %}<p class="chart-empty">{{ _('Held-out rainfall comparison is unavailable.') }}</p>{% endif %}
+        </article>
+        <article class="dashboard-chart-card"><p class="eyebrow">{{ _('OPEN-METEO HISTORY') }}</p><h2>{{ _('Rainfall distribution') }}</h2><p>{{ _('Count of days in each rainfall range') }}</p>
+          {% set distribution_max = rainfall_distribution|map(attribute='count')|max %}<div class="dashboard-distribution">{% for bucket in rainfall_distribution %}<div><span>{{ bucket.label }}</span><i><b style="width: {{ (bucket.count / distribution_max * 100) if distribution_max else 0 }}%"></b></i><strong>{{ bucket.count }}</strong></div>{% endfor %}</div><p class="dashboard-chart-source">{{ _('Ranges summarize the available recent daily observations.') }}</p>
+        </article>
+        <article class="dashboard-chart-card dashboard-model-summary"><p class="eyebrow">{{ _('MODEL TRANSPARENCY') }}</p><h2>{{ _('Model performance summary') }}</h2><p>{{ _('Held-out Karnataka test results') }}</p><div class="model-summary-metrics"><span><strong>48.07%</strong>{{ _('Test accuracy') }}</span><span><strong>59.98%</strong>{{ _('Balanced accuracy') }}</span><span><strong>99.13%</strong>{{ _('Rain recall') }}</span></div><a class="text-link" href="{{ url_for('performance') }}">{{ _('View evaluation details') }} &rarr;</a></article>
       </section>
 
       <section class="field-notes" id="field-notes">

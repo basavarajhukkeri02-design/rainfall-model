@@ -1,4 +1,95 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const uiLanguage = document.documentElement.lang || 'en';
+  const languageModal = document.getElementById('language-modal');
+  if (languageModal) {
+    // Detach the dialog from the sidebar so its fixed backdrop is viewport-bound.
+    document.body.append(languageModal);
+    const languageOpeners = [...document.querySelectorAll('[data-open-language-modal]')];
+    const closeLanguageButtons = [...languageModal.querySelectorAll('[data-close-language-modal]')];
+    const languageModalFocusables = [...languageModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')];
+    const firstLanguageOption = languageModal.querySelector('.language-modal-list button');
+    let languageOpener = null;
+    const closeLanguageModal = () => {
+      if (languageModal.hidden) return;
+      languageModal.hidden = true;
+      document.body.classList.remove('language-modal-open');
+      languageOpener?.focus();
+    };
+    languageOpeners.forEach((opener) => opener.addEventListener('click', () => {
+      languageOpener = opener;
+      languageModal.hidden = false;
+      document.body.classList.add('language-modal-open');
+      firstLanguageOption?.focus();
+    }));
+    closeLanguageButtons.forEach((button) => button.addEventListener('click', closeLanguageModal));
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeLanguageModal();
+    });
+    languageModal.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab' || !languageModalFocusables.length) return;
+      const first = languageModalFocusables[0];
+      const last = languageModalFocusables[languageModalFocusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+  }
+  const navToggle = document.querySelector('[data-mobile-nav-toggle]');
+  const sidebar = document.querySelector('.app-sidebar');
+  const setMobileNavOpen = (open) => {
+    if (!sidebar || !navToggle) return;
+    sidebar.classList.toggle('is-mobile-open', open);
+    sidebar.style.setProperty('transform', open ? 'translateX(0)' : 'translateX(-100%)', 'important');
+    navToggle.setAttribute('aria-expanded', String(open));
+    navToggle.setAttribute('aria-label', open ? navToggle.dataset.closeLabel : navToggle.dataset.openLabel);
+    navToggle.textContent = open ? '×' : '☰';
+  };
+  navToggle?.addEventListener('click', () => {
+    setMobileNavOpen(!sidebar?.classList.contains('is-mobile-open'));
+  });
+  document.querySelectorAll('.sidebar-link').forEach((link) => link.addEventListener('click', () => {
+    setMobileNavOpen(false);
+  }));
+  const clock = document.querySelector('[data-local-clock]');
+  if (clock) {
+    const updateClock = () => { clock.textContent = new Intl.DateTimeFormat(uiLanguage, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }).format(new Date()); };
+    updateClock(); window.setInterval(updateClock, 60_000);
+  }
+  const liveDate = document.querySelector('[data-live-date]');
+  const liveClock = document.querySelector('[data-live-clock]');
+  const weatherUpdated = document.querySelector('[data-weather-updated]');
+  if (liveDate || liveClock || weatherUpdated) {
+    const updateLocalTime = () => {
+      const now = new Date();
+      if (liveDate) liveDate.textContent = new Intl.DateTimeFormat(uiLanguage, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(now);
+      if (liveClock) liveClock.textContent = new Intl.DateTimeFormat(uiLanguage, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(now);
+      if (weatherUpdated) {
+        const updatedAt = weatherUpdated.dataset.updatedAt ? new Date(weatherUpdated.dataset.updatedAt) : now;
+        weatherUpdated.textContent = new Intl.DateTimeFormat(uiLanguage, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(updatedAt);
+      }
+    };
+    updateLocalTime(); window.setInterval(updateLocalTime, 1000);
+  }
+  const landingWeatherForm = document.querySelector('[data-landing-weather-form]');
+  const weatherSubmit = landingWeatherForm?.querySelector('[data-weather-submit]');
+  landingWeatherForm?.addEventListener('submit', () => {
+    if (!weatherSubmit) return;
+    weatherSubmit.disabled = true;
+    weatherSubmit.setAttribute('aria-busy', 'true');
+    weatherSubmit.classList.add('is-loading');
+    const label = weatherSubmit.querySelector('[data-weather-submit-label]');
+    if (label) label.textContent = landingWeatherForm.dataset.loadingLabel || 'Loading weather...';
+  });
+  document.querySelector('[data-weather-retry]')?.addEventListener('click', () => window.location.reload());
+  const historySearch = document.querySelector('[data-history-search]');
+  historySearch?.addEventListener('input', () => {
+    const query = historySearch.value.trim().toLocaleLowerCase();
+    document.querySelectorAll('[data-history-row]').forEach((row) => { row.hidden = !row.dataset.searchText.toLocaleLowerCase().includes(query); });
+  });
   // Start the forecast icon animations only after the page has been painted.
   document.querySelectorAll('[data-weather-icon]').forEach((icon) => {
     const supported = new Set(['sunny', 'partly-cloudy', 'cloudy', 'rainy', 'thunderstorm', 'snowy', 'unknown']);
@@ -149,6 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   });
+
 
   document.querySelectorAll('[data-translator]').forEach((widget) => {
     const message = (name) => widget.dataset[name] || '';

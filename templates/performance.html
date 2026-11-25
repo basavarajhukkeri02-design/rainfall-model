@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block title %}{{ _('Model performance | AgriRain') }}{% endblock %}
+{% block content %}
+<section class="analytics-page wrap performance-page">
+  <header class="analytics-heading"><div><p class="eyebrow">{{ _('MODEL TRANSPARENCY') }}</p><h1>{{ _('Model performance') }}</h1><p>{{ _('Reported evaluation for the saved Karnataka Random Forest model.') }}</p></div><span class="performance-model">{{ _('Random Forest') }}<small>{{ _('Validation selected') }}</small></span></header>
+  <div class="performance-notice"><strong>{{ _('Interpret scores with care') }}</strong><span>{{ _('These are held-out test results, not a guarantee for a particular district or forecast. Model probabilities are estimates, not guaranteed accuracy.') }}</span></div>
+  <article class="analytics-card"><p class="eyebrow">{{ _('HELD-OUT TEST SET') }}</p><h2>{{ _('Verified evaluation metrics') }}</h2><p class="analytics-subtitle">{{ _('Chronological test period: 2025-05-27 to 2025-12-30 · 157,917 records') }}</p>
+    <div class="metric-table"><div><span>{{ _('Accuracy') }}</span><strong>48.07%</strong></div><div><span>{{ _('Balanced accuracy') }}</span><strong>59.98%</strong></div><div><span>{{ _('ROC AUC') }}</span><strong>82.89%</strong></div><div><span>{{ _('PR AUC') }}</span><strong>75.09%</strong></div><div><span>{{ _('Rain precision') }}</span><strong>40.05%</strong></div><div><span>{{ _('Rain recall') }}</span><strong>99.13%</strong></div><div><span>{{ _('Rain F1 score') }}</span><strong>57.05%</strong></div><div><span>{{ _('Decision threshold') }}</span><strong>0.1752</strong></div></div>
+  </article>
+  <article class="analytics-card confusion-card"><p class="eyebrow">{{ _('RANDOM FOREST') }}</p><h2>{{ _('Confusion matrix') }}</h2><p class="analytics-subtitle">{{ _('Rows are actual class; columns are predicted class.') }}</p><div class="confusion-matrix"><span></span><strong>{{ _('Predicted no rain') }}</strong><strong>{{ _('Predicted rain') }}</strong><strong>{{ _('Actual no rain') }}</strong><b>21,459</b><b>81,525</b><strong>{{ _('Actual rain') }}</strong><b>479</b><b>54,454</b></div></article>
+  <p class="chart-source">{{ _('Source: karnataka_model/model_comparison_report.md. Threshold chosen on validation data; scores calculated on the later held-out test period.') }}</p>
+</section>
+{% endblock %}

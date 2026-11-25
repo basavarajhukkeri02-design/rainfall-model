@@ -29,6 +29,7 @@ from translations import LANGUAGES, translate
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = Path(os.environ.get("AGRIRAIN_DATABASE", BASE_DIR / "prediction_history.db"))
 MODEL_PATH = BASE_DIR / "karnataka_model" / "rainfall_model.pkl"
+RAINFALL_FEATURE_DATA_PATH = BASE_DIR / "karnataka_ml_features.csv"
 OPEN_METEO_URL = os.environ.get(
     "OPEN_METEO_API_URL", "https://api.open-meteo.com/v1/forecast"
 )
@@ -42,9 +43,12 @@ TRANSLATION_MAX_CHARS = 1000
 TRANSLATION_RATE_LIMIT = 10
 TRANSLATION_RATE_WINDOW = 60
 TRANSLATION_LANGUAGES = {
-    "kn": "ಕನ್ನಡ", "en": "English", "hi": "हिन्दी", "te": "తెలుగు",
-    "ta": "தமிழ்", "ml": "മലയാളം", "mr": "मराठी", "bn": "বাংলা",
-    "gu": "ગુજરાતી", "pa": "ਪੰਜਾਬੀ", "ur": "اردو",
+    "kn": "ಕನ್ನಡ (Kannada)", "en": "English", "hi": "हिन्दी (Hindi)",
+    "te": "తెలుగు (Telugu)", "ta": "தமிழ் (Tamil)",
+    "ml": "മലയാളം (Malayalam)", "mr": "मराठी (Marathi)",
+    "bn": "বাংলা (Bengali)", "gu": "ગુજરાતી (Gujarati)",
+    "pa": "ਪੰਜਾਬੀ (Punjabi)", "or": "ଓଡ଼ିଆ (Odia)",
+    "ur": "اردو (Urdu)",
 }
 DISTRICTS = {
     # Keys match the district labels used by the Karnataka training dataset.
@@ -89,6 +93,8 @@ WEATHER_CACHE_TTL_SECONDS = 20
 _weather_cache = {}
 _weather_cache_lock = threading.Lock()
 _weather_district_locks = {district: threading.Lock() for district in DISTRICTS}
+_rainfall_analytics_frame = None
+_rainfall_analytics_lock = threading.Lock()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -102,11 +108,17 @@ _translation_request_times = defaultdict(deque)
 _translation_rate_lock = threading.Lock()
 
 
+@app.after_request
+def ensure_html_utf8(response):
+    if response.mimetype == "text/html":
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+    return response
+
+
 def flash(message, category="message", *args, **kwargs):
     """Localize server-generated notices using the visitor's session language."""
     language = session.get("ui_language", "en")
     flask_flash(translate(message, language), category, *args, **kwargs)
-
 
 def get_db():
     """Open a row-based SQLite connection for one operation."""
@@ -147,7 +159,6 @@ def protect_post_requests():
                 return jsonify(error=translate("Your session expired. Refresh the page and try again.", session.get("ui_language", "en"))), 400
             abort(400)
 
-
 @app.context_processor
 def inject_csrf_token():
     language = session.get("ui_language", "en")
@@ -155,9 +166,8 @@ def inject_csrf_token():
         "csrf_token": session.get("_csrf_token", ""),
         "ui_language": language,
         "ui_languages": LANGUAGES,
-        "_": lambda message: translate(message, language),
+        "_": lambda message, **values: translate(message, language, **values),
     }
-
 
 def init_db():
     """Create account/history tables and migrate the original anonymous history."""
@@ -238,6 +248,96 @@ def load_model():
     except Exception:
         app.logger.exception("Could not load the Karnataka rainfall model")
         return None, "The Karnataka rainfall model could not be loaded."
+
+
+def _load_rainfall_analytics_frame():
+    """Load the small set of observed target and model feature columns once."""
+    global _rainfall_analytics_frame
+    if _rainfall_analytics_frame is not None:
+        return _rainfall_analytics_frame
+    with _rainfall_analytics_lock:
+        if _rainfall_analytics_frame is None:
+            columns = ["Date", *FEATURES, "Rainfall_Tomorrow", "Rain_Tomorrow"]
+            frame = pd.read_csv(RAINFALL_FEATURE_DATA_PATH, usecols=columns)
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+            frame["Rainfall_Tomorrow"] = pd.to_numeric(frame["Rainfall_Tomorrow"], errors="coerce")
+            frame["Rain_Tomorrow"] = pd.to_numeric(frame["Rain_Tomorrow"], errors="coerce")
+            frame = frame.dropna(subset=["Date", "District", "Rainfall_Tomorrow", "Rain_Tomorrow"])
+            frame = frame[
+                frame["Rainfall_Tomorrow"].ge(0)
+                & frame["Rain_Tomorrow"].isin([0, 1])
+                & np.isfinite(frame["Rainfall_Tomorrow"])
+            ].copy()
+            _rainfall_analytics_frame = frame
+    return _rainfall_analytics_frame
+
+
+def rainfall_analytics_for(district, weather, model_bundle):
+    """Build recent, monthly, and held-out actual-vs-model chart series."""
+    recent_rows = sorted(
+        (weather or {}).get("rainfall_history", []), key=lambda item: item.get("date", "")
+    )[-7:]
+    analytics = {
+        "recent": {
+            "labels": [row["date"] for row in recent_rows],
+            "values": [round(float(row["rainfall"]), 2) for row in recent_rows],
+        },
+        "monthly": {"labels": [], "values": []},
+        "comparison": {"labels": [], "actual": [], "predicted": [], "source": None},
+    }
+    try:
+        frame = _load_rainfall_analytics_frame()
+        district_rows = frame.loc[frame["District"].eq(district)].copy()
+        if district_rows.empty:
+            return analytics
+
+        # Average station samples for each day, then sum those daily district
+        # averages into monthly rainfall totals to avoid summing stations.
+        daily_means = district_rows.groupby("Date", sort=True)["Rainfall_Tomorrow"].mean()
+        monthly_totals = daily_means.groupby(daily_means.index.to_period("M")).sum().tail(6)
+        analytics["monthly"] = {
+            "labels": [period.strftime("%b %Y") for period in monthly_totals.index],
+            "values": [round(float(value), 1) for value in monthly_totals.values],
+        }
+
+        if not model_bundle or model_bundle.get("features") != FEATURES:
+            return analytics
+
+        # Match train_model.py's chronological 80/20 split so this comparison
+        # uses held-out observations that were not used to fit the model.
+        all_dates = pd.Index(frame["Date"].drop_duplicates().sort_values())
+        test_start = int(len(all_dates) * 0.80)
+        if test_start >= len(all_dates):
+            return analytics
+        held_out = district_rows.loc[district_rows["Date"].ge(all_dates[test_start])].copy()
+        recent_dates = held_out["Date"].drop_duplicates().sort_values().tail(7)
+        held_out = held_out.loc[held_out["Date"].isin(recent_dates)]
+        if held_out.empty:
+            return analytics
+
+        pipeline = model_bundle["pipeline"]
+        classes = list(getattr(pipeline, "classes_", []))
+        positive_label = model_bundle.get("positive_label")
+        if positive_label not in classes:
+            return analytics
+        probabilities = np.asarray(
+            pipeline.predict_proba(held_out[FEATURES]), dtype=float
+        )[:, classes.index(positive_label)]
+        if len(probabilities) != len(held_out) or not np.isfinite(probabilities).all():
+            return analytics
+        held_out["predicted_rain"] = probabilities >= float(model_bundle["threshold"])
+        grouped = held_out.groupby("Date", sort=True).agg(
+            actual=("Rain_Tomorrow", "mean"), predicted=("predicted_rain", "mean")
+        )
+        analytics["comparison"] = {
+            "labels": [day.strftime("%b %d") for day in grouped.index],
+            "actual": [round(float(value) * 100, 1) for value in grouped["actual"]],
+            "predicted": [round(float(value) * 100, 1) for value in grouped["predicted"]],
+            "source": f"Held-out test period · {grouped.index.min():%Y-%m-%d} to {grouped.index.max():%Y-%m-%d}",
+        }
+    except (OSError, KeyError, TypeError, ValueError, pd.errors.ParserError):
+        app.logger.exception("Rainfall analytics unavailable for %s", district)
+    return analytics
 
 
 def get_weather(district):
@@ -363,6 +463,12 @@ def _fetch_weather(district):
         "max_temp": max_temp,
         "rainfall": rainfall,
         "humidity": humidity_3pm,
+        "rainfall_history": [
+            {"date": day, "rainfall": float(value)}
+            for day, value in zip(daily_dates, daily.get("rain_sum", []))
+            if day < forecast_date and value is not None
+            and np.isfinite(float(value)) and float(value) >= 0
+        ],
     }
     for key in ("min_temp", "max_temp", "rainfall", "humidity"):
         result[key] = float(result[key])
@@ -543,7 +649,6 @@ def login_required(view):
         return view(*args, **kwargs)
     return wrapped_view
 
-
 def recent_predictions(user_id, limit=5):
     with database_connection() as connection:
         return connection.execute(
@@ -625,7 +730,6 @@ def login():
             flash("Email or password is incorrect.", "error")
     return render_template("login.html")
 
-
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if session.get("user_id"):
@@ -679,8 +783,37 @@ def set_language():
         destination = "/"
     return redirect(destination)
 
+@app.route("/", methods=["GET"])
+def home_landing():
+    district = request.args.get("district", "Bengaluru Urban")
+    if district not in DISTRICTS:
+        district = "Bengaluru Urban"
+    weather = None
+    weather_error = None
+    weather_updated_at = None
+    try:
+        weather = get_weather(district)
+        if weather:
+            weather_updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        app.logger.warning("Landing-page weather unavailable for %s", district, exc_info=True)
+        weather_error = "Live weather is temporarily unavailable. Please try again shortly."
+    return render_template(
+        "home.html", districts=DISTRICTS, district=district,
+        district_label=DISTRICT_LABELS.get(district, district), weather=weather,
+        weather_error=weather_error, weather_updated_at=weather_updated_at,
+        district_count=len(DISTRICTS),
+        weather_parameter_count=5, model_feature_count=len(FEATURES),
+        current_year=datetime.now().year,
+    )
 
-@app.route("/", methods=["GET", "POST"])
+
+@app.route("/home")
+def legacy_home():
+    return redirect(url_for("home_landing"))
+
+
+@app.route("/dashboard", methods=["GET", "POST"])
 @login_required
 def home():
     selected = request.form.get("district", "Bengaluru Urban") if request.method == "POST" else request.args.get("district", "Bengaluru Urban")
@@ -733,18 +866,23 @@ def home():
                 app.logger.exception("Prediction could not be completed")
                 flash("Prediction is unavailable because complete recent rainfall history is missing or invalid.", "error")
 
+    rainfall_history = weather.get("rainfall_history", []) if weather else []
+    rainfall_values = [item["rainfall"] for item in rainfall_history]
+    rainfall_distribution = [
+        {"label": "0 mm", "count": sum(value == 0 for value in rainfall_values)},
+        {"label": "0–2.5 mm", "count": sum(0 < value <= 2.5 for value in rainfall_values)},
+        {"label": "2.5–10 mm", "count": sum(2.5 < value <= 10 for value in rainfall_values)},
+        {"label": ">10 mm", "count": sum(value > 10 for value in rainfall_values)},
+    ]
+    rainfall_analytics = rainfall_analytics_for(selected, weather, model_bundle)
     return render_template(
         "index.html", districts=DISTRICTS, district_labels=DISTRICT_LABELS,
         district=selected, weather=weather,
         prediction_result=prediction_result, history=recent_predictions(session["user_id"]),
         model_error=model_error, profile=profile_summary(session["user_id"]),
+        rainfall_history=rainfall_history, rainfall_distribution=rainfall_distribution,
+        rainfall_analytics=rainfall_analytics,
     )
-
-
-@app.route("/home")
-@login_required
-def home_landing():
-    return render_template("home.html")
 
 
 @app.route("/settings")
@@ -771,6 +909,54 @@ def history():
         "history.html", records=rows, page=page,
         pages=max((total + page_size - 1) // page_size, 1), total=total,
     )
+
+
+@app.route("/visualizations")
+@login_required
+def visualizations():
+    district = request.args.get("district", "Bengaluru Urban")
+    if district not in DISTRICTS:
+        district = "Bengaluru Urban"
+    try:
+        weather = get_weather(district)
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        app.logger.warning("Visualization weather data unavailable for %s", district, exc_info=True)
+        weather = None
+    with database_connection() as connection:
+        rows = connection.execute(
+            "SELECT district, prediction, rainfall_probability, expected_rainfall, created_at "
+            "FROM prediction_history WHERE user_id = ? ORDER BY id DESC LIMIT 100",
+            (session["user_id"],),
+        ).fetchall()
+    history_by_day = defaultdict(list)
+    district_totals = defaultdict(list)
+    for row in reversed(rows):
+        history_by_day[row["created_at"][:10]].append(row["rainfall_probability"])
+        if row["expected_rainfall"] is not None:
+            district_totals[row["district"]].append(row["expected_rainfall"])
+    trend = [{"date": day, "probability": round(float(np.mean([v for v in values if v is not None])) * 100, 1)}
+             for day, values in history_by_day.items() if any(v is not None for v in values)]
+    rainfall_values = [item["rainfall"] for item in (weather.get("rainfall_history", []) if weather else [])]
+    rainfall_distribution = [
+        {"label": "0 mm", "count": sum(value == 0 for value in rainfall_values)},
+        {"label": "0–2.5 mm", "count": sum(0 < value <= 2.5 for value in rainfall_values)},
+        {"label": "2.5–10 mm", "count": sum(2.5 < value <= 10 for value in rainfall_values)},
+        {"label": ">10 mm", "count": sum(value > 10 for value in rainfall_values)},
+    ]
+    return render_template(
+        "visualizations.html", districts=DISTRICTS, district=district, weather=weather,
+        rainfall_history=weather.get("rainfall_history", []) if weather else [], trend=trend,
+        rainfall_distribution=rainfall_distribution,
+        district_comparison=[{"district": name, "rainfall": round(float(np.mean(values)), 1), "count": len(values)}
+                             for name, values in sorted(district_totals.items())],
+        records=rows,
+    )
+
+
+@app.route("/performance")
+@login_required
+def performance():
+    return render_template("performance.html")
 
 
 @app.post("/clear-history")

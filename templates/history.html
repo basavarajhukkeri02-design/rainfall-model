@@ -10,6 +10,7 @@
     </div>
     <span class="history-count"><strong>{{ total }}</strong><span>{{ _('records') }}</span></span>
   </header>
+  <label class="history-search">{{ _('Search records') }}<input type="search" data-history-search placeholder="{{ _('Search district or prediction…') }}"></label>
 
   {% if records %}
     <div class="history-record-list">
@@ -28,7 +29,7 @@
           {% set target_date = '%04d-01-01'|format(saved_year + 1) %}
         {% endif %}
         {% set probability = (item['rainfall_probability'] * 100)|round(1) if item['rainfall_probability'] is not none else none %}
-        <article class="history-record">
+        <article class="history-record" data-history-row data-search-text="{{ item['district'] }} {{ item['prediction'] }} {{ item['created_at'] }}">
           <header class="history-record-head">
             <div class="history-record-place">
               <span class="history-record-kicker">{{ _('DISTRICT') }}</span>

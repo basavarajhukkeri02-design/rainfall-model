@@ -1,19 +1,21 @@
 <!doctype html>
-<html lang="{{ ui_language }}">
+<html lang="{{ ui_language }}" dir="{{ 'rtl' if ui_language == 'ur' else 'ltr' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07100c">
+  <meta name="theme-color" content="#0b1730">
   <title>{% block title %}{{ _('AgriRain | Rainfall insights') }}{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='agrirain-dashboard-v2') }}">
-  <script defer src="{{ url_for('static', filename='js/script.js', v='agrirain-dashboard-v2') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='agrirain-dashboard-v16') }}">
+  {% block head_scripts %}{% endblock %}
+  <script defer src="{{ url_for('static', filename='js/script.js', v='agrirain-home-v9') }}"></script>
 </head>
 <body class="{% if session.get('user_id') %}has-sidebar{% endif %}">
   <div class="weather-animation-bg" aria-hidden="true"></div>
   {% if session.get('user_id') %}
   <aside class="app-sidebar" aria-label="{{ _('Main navigation') }}">
     <a class="brand" href="{{ url_for('home_landing') }}" aria-label="{{ _('AgriRain home') }}">
-      <span class="brand-mark">A</span><span class="brand-name">Agri<span>Rain</span><small>{{ _('Weather for better growing') }}</small></span>
+      <span class="agrirain-mark" aria-hidden="true"><i></i><b></b></span>
+      <span class="brand-name">Agri<span>Rain</span><small>{{ _('Weather for better growing') }}</small></span>
     </a>
     <p class="sidebar-label">{{ _('WORKSPACE') }}</p>
     <nav class="sidebar-nav">
@@ -21,20 +23,14 @@
       <a class="sidebar-link{% if request.endpoint == 'home' and not request.args.get('section') %} is-active{% endif %}" href="{{ url_for('home') }}"><span class="nav-icon" aria-hidden="true">▦</span>{{ _('Dashboard') }}</a>
       <a class="sidebar-link{% if request.endpoint == 'home' and request.args.get('section') == 'forecast' %} is-active{% endif %}" href="{{ url_for('home', section='forecast') }}#forecast"><span class="nav-icon" aria-hidden="true">☁</span>{{ _('District Weather') }}</a>
       <a class="sidebar-link{% if request.endpoint == 'home' and request.args.get('section') == 'prediction' %} is-active{% endif %}" href="{{ url_for('home', section='prediction') }}#prediction"><span class="nav-icon" aria-hidden="true">◉</span>{{ _('Rainfall Prediction') }}</a>
-      <a class="sidebar-link{% if request.endpoint == 'history' %} is-active{% endif %}" href="{{ url_for('history') }}"><span class="nav-icon" aria-hidden="true">▤</span>{{ _('History') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'history' %} is-active{% endif %}" href="{{ url_for('history') }}"><span class="nav-icon" aria-hidden="true">▤</span>{{ _('Weather Records') }} / History</a>
+      <a class="sidebar-link{% if request.endpoint == 'visualizations' %} is-active{% endif %}" href="{{ url_for('visualizations') }}"><span class="nav-icon" aria-hidden="true">V</span>{{ _('Data Visualization') }}</a>
+      <a class="sidebar-link{% if request.endpoint == 'performance' %} is-active{% endif %}" href="{{ url_for('performance') }}"><span class="nav-icon" aria-hidden="true">M</span>{{ _('Model Performance') }}</a>
       <a class="sidebar-link{% if request.endpoint == 'settings' %} is-active{% endif %}" href="{{ url_for('settings') }}"><span class="nav-icon" aria-hidden="true">⚙</span>{{ _('Settings') }}</a>
-      <a class="sidebar-link{% if request.endpoint == 'translator' %} is-active{% endif %}" href="{{ url_for('translator') }}"><span class="nav-icon" aria-hidden="true">文</span>{{ _('Translator') }}</a>
       <a class="sidebar-link{% if request.endpoint == 'about' %} is-active{% endif %}" href="{{ url_for('about') }}"><span class="nav-icon" aria-hidden="true">ⓘ</span>{{ _('About AgriRain') }}</a>
     </nav>
     <div class="sidebar-bottom">
-      <form class="ui-language-control" method="post" action="{{ url_for('set_language') }}" data-language-form>
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="next" value="{{ request.full_path }}">
-        <label for="ui-language">{{ _('Language') }}</label>
-        <select id="ui-language" name="language" aria-label="{{ _('Site language') }}">
-          {% for code, name in ui_languages.items() %}<option value="{{ code }}" {% if code == ui_language %}selected{% endif %}>{{ name }}</option>{% endfor %}
-        </select>
-      </form>
+      <button class="language-open-button" type="button" data-open-language-modal aria-haspopup="dialog" aria-controls="language-modal">🌐 <span>{{ _('Language') }}</span></button>
       <div class="sidebar-user" id="profile-card">
         <span class="profile-avatar" aria-hidden="true">{{ session.get('user_email', 'A')[:1]|upper }}</span>
         <span class="sidebar-user-name">{{ session.get('user_email') }}</span>
@@ -42,18 +38,33 @@
       <form method="post" action="{{ url_for('logout') }}" class="logout-form"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="logout-link" type="submit"><span class="nav-icon" aria-hidden="true">⇥</span>{{ _('Logout') }}</button></form>
     </div>
   </aside>
+  <button class="mobile-nav-toggle" type="button" aria-expanded="false" aria-label="{{ _('Open navigation') }}" data-open-label="{{ _('Open navigation') }}" data-close-label="{{ _('Close navigation') }}" data-mobile-nav-toggle>&#9776;</button>
   {% else %}
   <header class="public-header">
     <a class="brand" href="{{ url_for('home_landing') }}"><span class="brand-mark">A</span><span class="brand-name">Agri<span>Rain</span><small>{{ _('Weather for better growing') }}</small></span></a>
     <div class="public-actions">
-      <form class="ui-language-control" method="post" action="{{ url_for('set_language') }}" data-language-form>
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ request.full_path }}">
-        <label class="visually-hidden" for="ui-language">{{ _('Site language') }}</label><select id="ui-language" name="language" aria-label="{{ _('Site language') }}">{% for code, name in ui_languages.items() %}<option value="{{ code }}" {% if code == ui_language %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
-      </form>
+      <button class="language-open-button public-language-button" type="button" data-open-language-modal aria-haspopup="dialog" aria-controls="language-modal">🌐 <span>{{ _('Language') }}</span></button>
       <a href="{{ url_for('login') }}">{{ _('Log in') }}</a><a class="public-register" href="{{ url_for('register') }}">{{ _('Create account') }}</a>
     </div>
   </header>
   {% endif %}
+  <section class="language-modal" id="language-modal" role="dialog" aria-modal="true" aria-labelledby="language-modal-title" hidden>
+    <button class="language-modal-backdrop" type="button" data-close-language-modal aria-label="{{ _('Close language selector') }}"></button>
+    <div class="language-modal-panel" role="document">
+      <div class="language-modal-heading">
+        <h2 id="language-modal-title">🌐 {{ _('Select language') }}</h2>
+        <button class="language-modal-close" type="button" data-close-language-modal aria-label="{{ _('Close language selector') }}">×</button>
+      </div>
+      <div class="language-modal-list" role="group" aria-label="{{ _('Available languages') }}">
+        {% for code, name in ui_languages.items() %}
+        <form method="post" action="{{ url_for('set_language') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+          <button type="submit" name="language" value="{{ code }}" lang="{{ code }}"{% if code == ui_language %} aria-current="true"{% endif %}>{{ name }}</button>
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
   <main class="app-main">
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}<div class="wrap flash-list" role="status">{% for category, message in messages %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}</div>{% endif %}
